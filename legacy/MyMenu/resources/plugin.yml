@@ -1,0 +1,139 @@
+name: MyMenu
+author: ChaddTheMan
+version: 1.0.4.3
+description: Create custom menus quickly and easily!
+main: me.ChaddTheMan.MyMenu.MyMenu
+
+commands:
+  mymenu:
+    description: A MyMenu Command
+  mmhelp:
+    description: A MyMenu Command
+  mmlist:
+    description: A MyMenu Command
+  mmopen:
+    description: A MyMenu Command
+  mmedit:
+    description: A MyMenu Command
+  mmcreate:
+    description: A MyMenu Command
+  mmdelete:
+    description: A MyMenu Command
+  mmset:
+    description: A MyMenu Command
+  mmreload:
+    description: A MyMenu Command
+  mmsave:
+    description: A MyMenu Command
+  mminfo:
+    description: A MyMenu Command
+  mmname:
+    description: A MyMenu Command
+  mmchangelog:
+    description: A MyMenu Command
+  update:
+    description: 
+
+commands:
+  mymenu:
+    description: A MyMenu Command
+  mmhelp:
+    description: A MyMenu Command
+  mmlist:
+    description: A MyMenu Command
+  mmopen:
+    description: A MyMenu Command
+  mmedit:
+    description: A MyMenu Command
+  mmcreate:
+    description: A MyMenu Command
+  mmdelete:
+    description: A MyMenu Command
+  mmset:
+    description: A MyMenu Command
+  mmreload:
+    description: A MyMenu Command
+  mmsave:
+    description: A MyMenu Command
+  mminfo:
+    description: A MyMenu Command
+  mmname:
+    description: A MyMenu Command
+  mmchangelog:
+    description: A MyMenu Command
+  update:
+    description: 
+
+permissions:
+
+  MyMenu.*:
+    description: All MyMenu commands
+    children:
+      MyMenu.admin.*: true
+
+  MyMenu.admin.*:
+    description: All MyMenu admin commands
+    children:
+      MyMenu.help.admin: true
+      MyMenu.admin.reload: true
+      MyMenu.admin.save: true
+      MyMenu.admin.update: true
+      MyMenu.admin.menu.*: true
+      MyMenu.admin.item.*: true
+
+  MyMenu.admin.menu.*:
+    description: All MyMenu admin menu commands
+    children:
+      MyMenu.admin.menu.list: true
+      MyMenu.admin.menu.open: true
+      MyMenu.admin.menu.open.other: true
+      MyMenu.admin.menu.edit: true
+      MyMenu.admin.menu.delete: true
+      MyMenu.admin.menu.create: true
+      MyMenu.admin.menu.set: true
+      MyMenu.admin.menu.unset: true
+      MyMenu.admin.menu.info: true
+
+  MyMenu.admin.item.*:
+    description: All MyMenu item commands
+    children:
+      MyMenu.admin.item.name: true
+
+  MyMenu.help.admin:
+    description: Admin MyMenu help
+    children:
+      MyMenu.help: true
+      MyMenu.help.player: true
+  MyMenu.help:
+    description: MyMenu help
+    children:
+      MyMenu.help.player: true
+  MyMenu.help.player:
+    description: MyMenu playe help
+
+  MyMenu.admin.menu.list:
+    description: /mmlist
+  MyMenu.admin.menu.open:
+    description: /mmopen
+  MyMenu.admin.menu.open.other:
+    description: /mmopen [menu] [other]
+  MyMenu.admin.menu.delete:
+    description: /mmdelete
+  MyMenu.admin.menu.edit:
+    description: /mmedit
+  MyMenu.admin.menu.create:
+    description: /mmcreate
+  MyMenu.admin.menu.set:
+    description: /mmset
+  MyMenu.admin.menu.unset:
+    description: /mmset
+  MyMenu.admin.menu.info:
+    description: /mminfo
+  MyMenu.admin.reload:
+    description: /mmreload
+  MyMenu.admin.save:
+    description: /mmsave
+  MyMenu.admin.update:
+    description: /mmupdate
+  MyMenu.admin.item.name:
+    description: /mmname
