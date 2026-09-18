@@ -330,6 +330,15 @@ data-loss shape the rule exists to prevent.
 Read paths are unaffected. Players keep using existing menus; `list`, `info`, and `open`
 keep working.
 
+**Model constructors throw; the loader must not let that propagate.** `Menu` rejects an
+invalid name, out-of-range rows, or items outside the layout, and `ItemTemplate.Descriptive`
+rejects a non-item material — all as `IllegalArgumentException`. That is correct for an
+invariant, but it means a single malformed entry would abort a whole load if the storage
+layer let it escape. The loader catches **per menu and per slot**, converts the failure into
+a skip plus a log line naming menu and slot, and sets the degraded flag. This is the 1.x
+failure mode (one unknown material stopped the entire load) reappearing through a different
+door.
+
 ### 7.2 Debounced writes
 
 A mutation marks its menu dirty and schedules a write after

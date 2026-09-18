@@ -80,6 +80,12 @@ import java.util.TreeMap;
 public final class MenuRegistry {
 
     private record State(SortedMap<String, Menu> menus, Map<String, Long> revisions) {
+
+        // Copies here rather than at the call sites, so a snapshot cannot alias a working map.
+        State {
+            menus = Collections.unmodifiableSortedMap(new TreeMap<>(menus));
+            revisions = Map.copyOf(revisions);
+        }
     }
 
     private volatile State state = new State(Collections.emptySortedMap(), Map.of());
@@ -125,7 +131,7 @@ public final class MenuRegistry {
         Map<String, Long> revisions = new HashMap<>(current.revisions());
         long revision = ++lastRevision;
         revisions.put(menu.name(), revision);
-        state = new State(Collections.unmodifiableSortedMap(menus), Map.copyOf(revisions));
+        state = new State(menus, revisions);
         return revision;
     }
 
@@ -139,7 +145,7 @@ public final class MenuRegistry {
         menus.remove(name);
         Map<String, Long> revisions = new HashMap<>(current.revisions());
         revisions.remove(name);
-        state = new State(Collections.unmodifiableSortedMap(menus), Map.copyOf(revisions));
+        state = new State(menus, revisions);
         return Optional.of(removed);
     }
 }
