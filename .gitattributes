@@ -1,0 +1,4 @@
+# gradlew must keep LF endings or it fails under a CRLF checkout; the .bat needs CRLF.
+/gradlew        text eol=lf
+*.bat           text eol=crlf
+*.jar           binary

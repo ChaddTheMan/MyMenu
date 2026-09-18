@@ -348,6 +348,10 @@ certain situations," without specifying whether `COMMANDS` from `onEnable` is on
 An earlier draft stated this as settled. Confirm empirically with `runServer`; either way
 `/mymenu reload` is unaffected.
 
+**Verified 2026-09-18 (DECISIONS #59):** it is not disabled. `/bukkit:reload` replaces the
+plugin instance, and a bare `/reload` on 26.2 is Mojang's datapack reload, which re-fires
+`COMMANDS`.
+
 **Unverified risk:** Paper may compute command suggestions off the main thread. If so, the
 `<menu>` suggestion provider would read a registry this document declares main-thread-only.
 Check before implementing suggestions; a concurrent map or an immutable snapshot resolves

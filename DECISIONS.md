@@ -66,6 +66,8 @@ Accepted costs: Paper-only and stricter classloader isolation. **Corrected 2026-
 this entry originally listed "no `/reload`" as settled. Paper's docs only say reload is
 disabled in certain situations; whether registering `COMMANDS` from `onEnable` is one of
 them is unverified. Confirm empirically at stage 1.
+**Corrected 2026-09-18:** confirmed at stage 1 — a `COMMANDS` handler registered from
+`onEnable` does **not** disable Bukkit's reload. See #59.
 
 ### 7. Package renamed to lowercase
 **Old:** `me.ChaddTheMan.MyMenu`.
@@ -539,6 +541,56 @@ no releases** (true for this repo until 2.0.0 ships) and that must be silent, no
 the unauthenticated rate limit is **60 requests per hour per IP**, which shared hosts share
 between many servers, so results are cached and rate-limiting is treated as "unknown"; and
 GitHub **rejects requests with no `User-Agent`**.
+
+---
+
+## Implementation (entries 58 onward)
+
+### 58. Target Paper 26.2, the newest stable build, not 26.3
+**Old:** n/a.
+**New:** `paper-api 26.2.build.124-stable`, `api-version: '26.2'`, and `runServer` on 26.2.
+**Why:** On 2026-09-18, 26.3 exists but every build is on Paper's ALPHA channel, and the
+newest STABLE build is 26.2-124. SPEC §2 says "latest release line (26.x)", which 26.2
+satisfies. Compiling against an alpha API would risk building on methods that change before
+release. Paper's own plugin docs use `api-version: '26.2'`. Move to 26.3 once it has a stable
+build: that means changing two values at the top of `build.gradle.kts`. Note that API
+artifacts now follow `<mc>.build.<n>-stable`, not the old `-R0.1-SNAPSHOT` form, so older
+tutorials give coordinates that do not resolve.
+
+### 59. `/reload` on 26.2: what actually happens
+**Old:** n/a.
+**New:** Verified empirically at stage 1 on Paper 26.2-124:
+- A bare `/reload` is **Mojang's datapack reload** (`/help reload` reports "A Mojang
+  provided command"). Bukkit's plugin reload is reachable only as `/bukkit:reload`.
+- The datapack reload fires the `COMMANDS` handler again with `cause=RELOAD`. Commands keep
+  working afterwards. This confirms that registration must be idempotent (ARCHITECTURE §8).
+- `/bukkit:reload confirm` is **not** disabled by a `COMMANDS` handler registered in
+  `onEnable`. It disables MyMenu, builds a **new plugin instance** in a new classloader,
+  enables it, and fires the new instance's handler once with `cause=RELOAD`. The old
+  handler does not fire. Paper logs a warning that Paper plugins do not support reloading.
+**Why it matters:** #6 and ARCHITECTURE §8 left this open. The consequence is that server
+owners *can* hot-reload MyMenu. `onDisable` therefore has to leave nothing behind: no
+running storage executor, no scheduled tasks, no open inventories holding a stale
+`MenuHolder`. A second instance may start in the same JVM moments later. The warning is
+Paper's, so MyMenu adds no second one.
+
+### 60. Library versions live once, in the build; the loader ignores the JSON's repositories
+**Old:** n/a.
+**New:** HikariCP and the MySQL driver are declared as `paperLibrary` in `build.gradle.kts`.
+The `de.eldoria.plugin-yml` fork writes them to `paper-libraries.json` in the jar, and
+`MyMenuLoader` reads **only the dependency list** from that file. The loader always resolves
+against `MavenLibraryResolver.MAVEN_CENTRAL_DEFAULT_MIRROR`.
+**Why:** Hard-coding coordinates in the loader would mean a second copy of each version to
+keep in step. The generated JSON also lists `repo.maven.apache.org` as a repository, and
+using that would break Central's terms (ARCHITECTURE §11), so the file's repository map is
+deliberately unused. Because of that, the build's "No mavenCentralProxy configured" warning
+is harmless. `useDefaultCentralProxy()` would silence it, but it would also write proxy URLs
+into the JSON that nothing reads. The original `net.minecrell.plugin-yml` has had no release
+since 2023; the Eldoria fork is the maintained one, and it still uses the `net.minecrell`
+package names in the DSL.
+
+Shadow (`com.gradleup.shadow` 9.6.1, verified) is **not applied yet**. It exists only to
+shade bStats, which arrives at stage 10.
 
 ---
 

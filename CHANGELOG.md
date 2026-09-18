@@ -41,6 +41,7 @@ plugin that happens to share a name.
 - Tab completion and typed arguments on every command
 
 ### Changed
+- Requires Paper 26.2 or newer, running on Java 25
 - All commands are now subcommands of `/mymenu` (aliased `/mm`), replacing the thirteen
   separate `/mm…` commands
 - Binding an item now captures the whole item, including its name, lore and enchantments
