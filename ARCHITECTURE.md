@@ -302,7 +302,9 @@ Storage owns **its own `ExecutorService`**, not Bukkit's scheduler, because the 
 stops accepting tasks during disable.
 
 **The single documented exception:** `onDisable` calls `flush()`, then `shutdown()` and
-`awaitTermination` with a bounded timeout, logging loudly if it expires. It writes pending
+`awaitTermination` with a bounded timeout, logging loudly if it expires. This is mandatory,
+not best-effort: `/bukkit:reload` can start a second plugin instance moments later (§8), and
+a surviving executor from the old instance would write to the same files as the new one. It writes pending
 debounced work and drains the queue. It does not walk the registry performing a full save.
 
 Debouncing is what makes the flush necessary; an earlier draft claimed there was nothing to
@@ -340,17 +342,27 @@ Registration happens in `onEnable` via
 `getLifecycleManager().registerEventHandler(LifecycleEvents.COMMANDS, ...)`, with `mm`
 passed as an alias to `Commands.register(...)`.
 
-**The handler runs again on `/minecraft:reload` (the server's own reload, not
-`/mymenu reload`), so registration must be idempotent.**
+**Confirmed at stage 1 on Paper 26.2:** a `COMMANDS` handler registered from `onEnable`
+does **not** disable Bukkit's plugin reload. An earlier draft claimed it did.
 
-Paper's docs say `/reload` is disabled when plugins register lifecycle handlers "in
-certain situations," without specifying whether `COMMANDS` from `onEnable` is one of them.
-An earlier draft stated this as settled. Confirm empirically with `runServer`; either way
-`/mymenu reload` is unaffected.
+What actually exists on 26.2:
 
-**Verified 2026-09-18 (DECISIONS #59):** it is not disabled. `/bukkit:reload` replaces the
-plugin instance, and a bare `/reload` on 26.2 is Mojang's datapack reload, which re-fires
-`COMMANDS`.
+- A bare `/reload` is Mojang's **datapack** reload. Bukkit's plugin reload is reachable only
+  as `/bukkit:reload`.
+- The datapack reload re-fires the `COMMANDS` handler (cause `RELOAD`), so **registration
+  must be safe to run twice.**
+- `/bukkit:reload` constructs a **new plugin instance in a new classloader**. Only the new
+  instance registers; Paper logs its own warning about the practice.
+
+The last point matters beyond commands. Two copies of the plugin can briefly exist in one
+JVM: the old instance's `onDisable` runs, then a fresh instance loads. So **`onDisable`
+must stop everything the plugin started** — the storage executor, scheduled tasks, pending
+debounced writes — or a leaked thread from the old copy writes to the same files as the new
+one. This is what makes §7.4's shutdown discipline load-bearing rather than tidy, and it is
+a second and independent reason for the no-static-state rule in §2: static fields are
+exactly where classloader leaks originate.
+
+`/mymenu reload` is unaffected by any of this.
 
 **Unverified risk:** Paper may compute command suggestions off the main thread. If so, the
 `<menu>` suggestion provider would read a registry this document declares main-thread-only.
@@ -429,8 +441,15 @@ jar as a resource, since `/mymenu changelog` reads it.
 driver even when using YAML. Accepted; the alternative is a separate addon jar, which is
 worse for a plugin this size.
 
-**Verify all plugin coordinates at stage 1.** Shadow is now `com.gradleup.shadow`, and
-`plugin-yml` has a maintained fork.
+**Verified at stage 1 (2026-09-18).** `plugin-yml` is the maintained fork
+`de.eldoria.plugin-yml.paper` (the original has had no release since 2023), `run-paper`
+3.1.0, Shadow `com.gradleup.shadow` 9.6.1 (not added until stage 10, when bStats arrives),
+`paper-api` `26.2.build.124-stable` — note the `-stable` suffix, which older tutorials omit
+and which therefore fails to resolve. Library versions live once, as `paperLibrary`
+declarations in the build; `generateLibrariesJson` writes them to `paper-libraries.json` and
+the loader reads only the dependency list from it, always fetching through the Central
+mirror. The JSON's repository list is ignored, which is why a "no CentralProxy configured"
+warning is harmless.
 
 ### 11.1 `.gitignore`
 
