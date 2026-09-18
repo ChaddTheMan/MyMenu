@@ -7,7 +7,8 @@ Bukkit 1.8.1 in January 2015 (version 1.0.4.3). The new version targets modern P
 carries **no backward compatibility** of any kind.
 
 Read `SPEC.md` for required behaviour and `ARCHITECTURE.md` for structure before writing
-code. Record non-obvious choices in `DECISIONS.md` as you go.
+code. `AUDIT.md` records the pre-implementation review that produced revision 2 of both.
+Record non-obvious choices in `DECISIONS.md` as you go.
 
 - **Author:** ChaddTheMan
 - **License:** GPL-3.0 (every source file gets the standard GPLv3 header)
@@ -63,18 +64,90 @@ The user's knowledge and mine both thin out around current Paper APIs.
    caused the worst bug in the original.
 2. **No blocking I/O on the main thread.** File and database access is async and returns
    a `CompletableFuture`. Hop back to the main thread before touching any Bukkit API.
+   Exactly one exception exists: `onDisable` drains in-flight writes from storage's own
+   executor with a bounded timeout. It never initiates a save. Do not add a second
+   exception.
 3. **The model is never the view.** A `Menu` is data. An `Inventory` is a rendering. Never
    store an `Inventory` on a model object, and never read menu state back out of an open
    inventory.
 4. **Identify menus by `InventoryHolder`,** never by inventory title.
 5. **Never op a player,** temporarily or otherwise. Elevation uses a
    `PermissionAttachment` removed in a `finally` block.
-6. **Never write the live data file in place.** Temp file, rotate backup, atomic move.
+6. **Never write the live data file in place.** Copy the live file to `backups/`, write a
+   temp file, then atomically move the temp over the live file — in that order. Rotating
+   the live file out first leaves a window with no live file.
 7. **Listeners hold no per-event state in fields.** Locals and parameters only.
-8. **Sessions are cleaned up unconditionally,** on close and on quit, including on
-   exception paths.
-9. **No legacy support.** No 1.x commands, no 1.x data migration, no material alias table,
-   no damage-value handling.
+8. **Session validity is derived, not tracked.** A view session counts as valid only if
+   the player currently has a `MenuHolder` inventory open or is in a known transient
+   state. Never let a map entry alone be authoritative — that is what locked players out
+   of 1.x. Close handling branches on `InventoryCloseEvent.getReason()`; unconditional
+   cleanup would destroy navigation stacks and chat prompts. Quit cleanup *is*
+   unconditional, and no path may leave a session behind on an exception.
+9. **Never open or close an inventory inside `InventoryClickEvent`.** Schedule it for the
+   next tick.
+10. **Never silently drop data.** A parse failure or a failed write puts storage into a
+   degraded state. `MenuService` then refuses **mutations before they reach the model** —
+   never at the storage boundary, where the model has already changed and the edit is lost
+   on the next reload. Read paths keep working.
+11. **Substitution happens after parsing.** Substituted values are never re-parsed as
+   MiniMessage, and values entering command strings are sanitised. Placeholder output and
+   nicknames are player-controlled; this is injection defence.
+12. **No legacy support.** No 1.x commands, no 1.x data migration, no material alias
+   table, no damage-value handling.
+
+## Documentation during implementation
+
+Four artefacts, four audiences. Keep them separate; a file that duplicates another is a
+file nobody reads.
+
+### `DECISIONS.md` — why the code is shaped this way
+
+Audience: the user in six months, and a later session with no context.
+
+Entries 1 to 57 are pre-implementation. Continue the numbering and the template. **The bar
+is high:** an entry goes in only when
+
+- the implementation diverges from `SPEC.md` or `ARCHITECTURE.md`, or
+- something was decided that neither document covers, or
+- a documented claim turned out to be wrong (version, API, behaviour).
+
+Do **not** restate what the documents already say, and do not record routine
+implementation choices. The test is whether someone reading the code later would ask "why
+is it like that?" Expect roughly two to five entries per stage, not per session.
+
+When an entry corrects an earlier one, add a dated correction to the original rather than
+editing it silently — see entries 15, 18 and 25 for the pattern.
+
+### `CHANGELOG.md` — what changed, for server owners
+
+Created at stage 1, maintained as you go, bundled into the jar as a resource because
+`/mymenu changelog` reads it. Keep-a-Changelog format with an `Unreleased` section at the
+top. One line per user-visible change, in plain language, no internal terminology.
+
+If a change cannot be described to a server owner in one sentence, that is a signal the
+feature is confused, not a signal to write two sentences.
+
+### Git commit messages — the routine record
+
+Everything that does not clear the `DECISIONS.md` bar lives here. Describe the change and
+its reason, not the files touched.
+
+### `NOTES.md` — cross-session state
+
+Short, **overwritten each session, never appended**. Exactly four things: current stage,
+what is verified working, what is known broken, what needs the user's input. This is what
+makes resuming after a few days cheap.
+
+### Architectural explanations go in the code
+
+The user set the teaching dial at roughly 80/20, with architectural reasoning explained
+before it is written. Those explanations are lost when the session closes.
+
+So: **when you explain something architectural, put the explanation in a comment block at
+the head of the relevant class**, not only in chat. A paragraph atop `ActionExecutor` on
+why execution cannot be a simple loop is worth more than the same paragraph in a transcript
+nobody scrolls back through. This is the one place where more than a line of comment is
+wanted; the "why, not what" rule still governs everything inside the class body.
 
 ## Build and test loop
 
@@ -100,8 +173,9 @@ The test server's directory is `run/` and is git-ignored.
 
 ## Known placeholders
 
-- **bStats plugin ID.** Requires registering the plugin at https://bstats.org, which only
-  the user can do. Leave a clearly marked constant and do not invent a number.
+None. The bStats plugin ID is **34120** (registered). Note that the nine custom charts in
+`SPEC.md` §14.2 must also be created on the bStats website with matching IDs, which only
+the user can do; flag it when stage 10 is reached.
 
 ## Build order
 
@@ -125,6 +199,6 @@ replaces.
 
 ## Deferred features
 
-Listed in `SPEC.md` §14. Do not implement them, do not add hooks "for later," and do not
+Listed in `SPEC.md` §15. Do not implement them, do not add hooks "for later," and do not
 design around them beyond what the architecture already provides. If something in the
 list looks cheap while you are nearby, note it in `DECISIONS.md` and move on.
