@@ -592,6 +592,70 @@ package names in the DSL.
 Shadow (`com.gradleup.shadow` 9.6.1, verified) is **not applied yet**. It exists only to
 shade bStats, which arrives at stage 10.
 
+### 61. Models are immutable; the registry is copy-on-write
+**Old:** `MyMenuMenu` and `MyMenuItem` were mutable and reachable from everywhere.
+**New:** `Menu`, `MenuItem`, `ItemTemplate` and `BoundItem` are records with `with...`
+methods. An edit builds a new `Menu`, and `MenuService` puts it into `MenuRegistry`. The
+registry's write methods and its constructor are package-private to `service/`. Revisions are
+held by the registry, not stamped on the `Menu`. Each registry write publishes a new
+immutable snapshot through a `volatile` field.
+**Why:** ARCHITECTURE §3 says models are "mutable from the main thread only" and have the
+revision "stamped on the menu". But the rule that only `MenuService` mutates menus cannot be
+enforced with mutable models. `Menu` is in `model/`, `MenuService` is in `service/`, and
+package-private access does not cross packages, so any setter would have to be public.
+Immutability makes the rule structural. It also makes two other things free: the
+main-thread snapshot that #53 requires before the async hop is just a reference, and
+registry reads become safe from any thread. That resolves ARCHITECTURE §8's open risk about
+suggestions being computed off the main thread. The revision is not menu data (it is never
+saved, and two equal menus loaded at different times must differ), so it lives next to the
+menu rather than inside it.
+**Cost:** every edit allocates a new menu and copies the registry map, which is trivial at
+realistic menu counts. The `with...` methods are boilerplate. `MenuService.update` compares
+the old and new menu and commits nothing when they are equal, so a no-op edit does not bump
+the revision and invalidate open views. The enforcement boundary is the whole `service/`
+package, not the one class, so that package should stay small.
+
+### 62. Click keys are MyMenu's own enum; click sounds are stored as keys
+**Old:** n/a.
+**New:** `MenuItem` maps `ClickKey` (MyMenu's enum) to action lists, not Bukkit's
+`ClickType`. `clickSound` is an Adventure `Key`, not `org.bukkit.Sound`.
+**Why:** ARCHITECTURE §1 and §3 specify `Map<ClickType, List<Action>>`, which cannot hold
+SPEC §8.4's `OTHER` key. Verified against `paper-api 26.2.build.124-stable`: `ClickType` has
+`LEFT, SHIFT_LEFT, RIGHT, SHIFT_RIGHT, WINDOW_BORDER_LEFT, WINDOW_BORDER_RIGHT, MIDDLE,
+NUMBER_KEY, DOUBLE_CLICK, DROP, CONTROL_DROP, CREATIVE, SWAP_OFFHAND, UNKNOWN` and no
+`OTHER`. Mapping the Bukkit constants that have no key of their own (`CONTROL_DROP`,
+`SWAP_OFFHAND`, the window-border clicks, `CREATIVE`, `UNKNOWN`) onto keys is a stage 6
+decision. On 26.2, `org.bukkit.Sound` is an interface (`extends OldEnum<Sound>`), not an
+enum, so storing it would tie the model to a registry lookup and a deprecated `valueOf`
+path. A `Key` is plain data. Stage 3 decides the YAML spelling. SPEC §5.3 shows
+`UI_BUTTON_CLICK`; storing `minecraft:ui.button.click` would be the direct form.
+
+### 63. Layout changes that would strand items are refused
+**Old:** `setRows()` computed a size from the unclamped parameter (ARCHITECTURE §12).
+**New:** Every `Menu` guarantees that each occupied slot is inside its layout.
+`MenuService.changeLayout` refuses with `ITEMS_OUTSIDE_LAYOUT` when a type or row change
+would leave items outside the menu.
+**Why:** Neither document says what happens when a six-row chest with items in row six
+becomes three rows or a hopper. Dropping the items is silent data loss. Keeping them invisible
+means the menu shows something different from what it holds, and the items reappear on a
+later resize. Refusing makes the admin move or delete them first, which the property editor
+supports. The invariant also means the renderer and storage never have to handle an
+out-of-range slot.
+
+### 64. `MenuService` talks to a narrow `MenuPersistence`, not to `MenuStorage`
+**Old:** n/a.
+**New:** `MenuService` depends on `MenuPersistence` (`isDegraded`, `markDirty(name)`,
+`markDeleted(menu)`), declared in `service/`. The stage 3 debounced writer implements it over
+ARCHITECTURE §7's `MenuStorage`.
+**Why:** ARCHITECTURE §7.2 says a mutation "marks its menu dirty and schedules a write" but
+does not say who owns the debounce. `MenuStorage` does I/O and returns futures. If
+`MenuService` called it directly, either every edit would write immediately, undoing #48, or
+the debounce timer would live in the mutation gate, mixing write policy into it. With the
+split, `MenuService` only records intent and never handles a future. The interface is declared
+by the service that calls it, so stage 3 depends on `service/` rather than the reverse.
+`markDeleted` receives the removed `Menu` because the delete backup (SPEC §3.5) needs its
+contents after the registry has dropped it.
+
 ---
 
 ## Template for new entries

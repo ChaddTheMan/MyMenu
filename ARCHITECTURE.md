@@ -75,17 +75,72 @@ corrupted each other's work. Everything here is instance state owned by the plug
 `Menu` holds: name, title, author, author UUID, type, rows, bound item,
 `giveItemOnJoin`, and a `Map<Integer, MenuItem>`.
 
-`MenuRegistry` owns the menus by name and holds **one plugin-wide revision counter**.
-Every mutation increments it and stamps the new value on the menu it touched. A per-menu
-counter would be useless for detecting deletion and would collide after a
+`MenuRegistry` owns the menus by name and holds **one plugin-wide revision counter**. Every
+mutation increments it and records the new value **beside** the menu, not inside it. A
+per-menu counter would be useless for detecting deletion and would collide after a
 delete-then-recreate.
+
+The revision is deliberately not part of `Menu`: it is never persisted, and two identical
+menus loaded at different times must still be distinguishable.
 
 `MenuService` sits in front of the registry and is the only path by which menus are
 mutated. It is where the degraded-state gate lives (§7.1), and it is what marks menus dirty
-for the debounced writer (§7.2).
+for the debounced writer (§7.2). Refusals come back as ordinary result values, not
+exceptions, so every refused command can explain itself (SPEC §12).
 
-`MenuItem` holds: an `ItemTemplate`, a `Map<ClickType, List<Action>>`, an optional view
+`MenuService` depends on a narrow `MenuPersistence` interface (`isDegraded`, `markDirty`,
+`markDeleted`) rather than on `MenuStorage`, which keeps debounce and file handling out of
+the mutation gate.
+
+### 3.1 Models are immutable
+
+**Revised at stage 2.** An earlier draft made models mutable and main-thread-only, relying
+on convention to keep mutation inside `MenuService`. Java visibility cannot express that —
+package-private does not span `service/` into `model/` — so the rule was unenforceable.
+Models are therefore immutable, and a change means building a new instance and swapping it
+into the registry.
+
+Three consequences:
+
+- The "only `MenuService` mutates" rule is structural rather than conventional.
+- Registry reads are thread-safe, which settles §8's open question about whether Paper
+  computes command suggestions off the main thread.
+- The whole-registry snapshot §7 needs before its async hop becomes a copy of references.
+  It cannot tear, and it is free.
+
+**Immutability must be deep, or it is a lie that reads as a guarantee.** Bukkit's
+`ItemStack` is mutable: it is `clone()`d on construction and on every read. Every
+collection — lore, action lists, the slot map — is copied into an unmodifiable view rather
+than exposed directly.
+
+**The registry publishes copy-on-write snapshots through a `volatile` field.** Each write
+builds a new immutable map and publishes it. This beats a `ConcurrentHashMap` here because
+the registry is read constantly and written rarely, and because a reader holding one
+snapshot sees a **consistent** view — a reader iterating a concurrent map can observe a
+half-applied change.
+
+**That pattern is safe only with a single writer.** Read-modify-write of the volatile field
+from two threads loses updates with no visible symptom. Writes happen on the main thread,
+through `MenuService`, and nowhere else. If that ever stops being true, this pattern must
+change with it.
+
+The registry's write methods and constructor are package-private to `service/`, so the
+enforcement boundary is that package. Keep it small.
+
+Thread-safe *model* reads do not relax anything else: calling the Bukkit API off the main
+thread remains forbidden.
+
+`MenuItem` holds: an `ItemTemplate`, a `Map<ClickKey, List<Action>>`, an optional view
 permission, an optional hidden-fallback template, a click sound, and a cooldown.
+
+`ClickKey` is MyMenu's own enum, **not** Bukkit's `ClickType`, which has no `OTHER`
+constant and so cannot express SPEC §8.4's fallback key. Mapping from `ClickType`:
+`CONTROL_DROP` → `DROP`; `WINDOW_BORDER_LEFT`, `WINDOW_BORDER_RIGHT`, `SWAP_OFFHAND`,
+`CREATIVE` and `UNKNOWN` → `OTHER`.
+
+The click sound is stored as a **namespaced key** (`minecraft:ui.button.click`), because
+`Sound` is a registry-backed interface on 26.2 rather than an enum. Bare names are accepted
+case-insensitively on input.
 
 **Glow lives on `ItemTemplate`, not on `MenuItem`.** It is an item property, and putting
 it in one place is what lets it apply identically to descriptive and opaque templates.
@@ -102,7 +157,7 @@ override, so it works identically for both shapes and never forces the opaque fo
 Resolution happens at render time, never at load time, because the same template renders
 differently per viewer.
 
-Models are mutable from the main thread only.
+Models are immutable; see §3.1.
 
 ---
 
@@ -250,9 +305,9 @@ public interface MenuStorage {
 The executor is **single-threaded**, which gives write ordering for free: two rapid
 mutations to the same menu cannot land out of order.
 
-`save(Menu)` under YAML rewrites the whole file, so the writer needs every menu. Models are
-main-thread-only, so **the snapshot is taken on the main thread before the async hop.**
-Nothing may touch a model from the writer thread.
+`save(Menu)` under YAML rewrites the whole file, so the writer needs every menu. Since
+models are immutable (§3.1), that snapshot is a copy of references and cannot tear. The
+earlier requirement to take it on the main thread before the async hop no longer applies.
 ```
 
 **`YamlMenuStorage`** writes `menus.yml` using the descriptive form where possible and the
@@ -364,10 +419,10 @@ exactly where classloader leaks originate.
 
 `/mymenu reload` is unaffected by any of this.
 
-**Unverified risk:** Paper may compute command suggestions off the main thread. If so, the
-`<menu>` suggestion provider would read a registry this document declares main-thread-only.
-Check before implementing suggestions; a concurrent map or an immutable snapshot resolves
-it.
+**Resolved at stage 2.** This was an open risk while models were mutable: if Paper computes
+suggestions off the main thread, the `<menu>` provider would read a main-thread-only
+registry. Immutable models plus a concurrent map (§3.1) make that safe regardless of which
+thread Paper uses.
 
 Help text is **generated from the subcommand registry**. 1.x had 14 KB of hand-maintained
 help that had already drifted: it documented `/mmupdate`, which never existed, and
