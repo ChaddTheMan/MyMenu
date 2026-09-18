@@ -284,7 +284,7 @@ menus:
           hiddenFallback:
             material: GRAY_STAINED_GLASS_PANE
             displayName: '&7Locked'
-          clickSound: UI_BUTTON_CLICK
+          clickSound: minecraft:ui.button.click
           cooldown: 3
           actions:
             LEFT:
@@ -397,7 +397,7 @@ contents, because view permissions and placeholders resolve per player.
 |---|---|
 | `viewPermission` | Item renders only for players holding this node |
 | `hiddenFallback` | Rendered in place of a hidden item; if absent, the slot is empty |
-| `clickSound` | Sound played to the clicker on a successful click |
+| `clickSound` | Sound played to the clicker on a successful click. Stored as a namespaced key (`minecraft:ui.button.click`); bare names accepted case-insensitively on input |
 | `cooldown` | Seconds between uses, per player. In memory only, cleared on restart. Bypassed by `MyMenu.bypass.cooldown` |
 | `glow` | Enchantment glint override, with no real enchantment |
 
@@ -420,6 +420,13 @@ The client sends a `LEFT` click before a `DOUBLE_CLICK`, so mapping both means b
 All clicks and drags inside a menu are cancelled, in both view and edit mode. Items are
 never removed from a menu by a player. Edit mode interprets the cancelled click as an
 editing operation rather than ignoring it; see §11.
+
+### 8.4.1 Shrinking a menu
+
+Changing a menu's type or row count so that occupied slots would fall outside the new
+bounds is **refused**, and the refusal names the offending slots. Dropping those items is
+data loss; keeping them unrendered creates state that exists in storage and appears
+nowhere. The admin clears the slots first.
 
 ### 8.5 Stale views
 
