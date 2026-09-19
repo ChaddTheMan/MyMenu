@@ -17,6 +17,9 @@
  */
 package me.chaddtheman.mymenu;
 
+import me.chaddtheman.mymenu.action.ActionExecutor;
+import me.chaddtheman.mymenu.action.ActionParser;
+import me.chaddtheman.mymenu.action.ActionTextResolver;
 import me.chaddtheman.mymenu.config.PluginConfig;
 import me.chaddtheman.mymenu.listener.InventoryClickListener;
 import me.chaddtheman.mymenu.listener.InventoryCloseListener;
@@ -27,9 +30,9 @@ import me.chaddtheman.mymenu.model.Menu;
 import me.chaddtheman.mymenu.render.ItemBuilder;
 import me.chaddtheman.mymenu.render.MenuRenderer;
 import me.chaddtheman.mymenu.render.TokenReplacer;
+import me.chaddtheman.mymenu.service.CooldownStore;
 import me.chaddtheman.mymenu.service.MenuService;
 import me.chaddtheman.mymenu.session.SessionManager;
-import me.chaddtheman.mymenu.storage.ActionCodec;
 import me.chaddtheman.mymenu.storage.DebouncedMenuWriter;
 import me.chaddtheman.mymenu.storage.YamlMenuStorage;
 import org.bukkit.plugin.PluginManager;
@@ -86,7 +89,10 @@ public final class MyMenu extends JavaPlugin {
             }
         };
 
-        YamlMenuStorage storage = new YamlMenuStorage(getDataPath(), ActionCodec.NONE, mainThread, logger);
+        // TODO(stage 7): actions.maxTotalDelaySeconds and navigation.maxDepth come from config.yml
+        // once PluginConfig reads them; until then these are SPEC's defaults (§9.2, §9.3).
+        ActionParser actions = new ActionParser(logger, ActionParser.DEFAULT_MAX_TOTAL_DELAY_SECONDS);
+        YamlMenuStorage storage = new YamlMenuStorage(getDataPath(), actions, mainThread, logger);
         DebouncedMenuWriter writer = new DebouncedMenuWriter(this, storage, mainThread, logger);
         MenuService menuService = new MenuService(writer);
         this.storage = storage;
@@ -100,9 +106,14 @@ public final class MyMenu extends JavaPlugin {
         SessionManager sessions = new SessionManager(this, menuService.registry(), renderer);
         this.sessions = sessions;
 
+        // TODO(stage 9): TextService replaces the parsing-only resolver with one that substitutes.
+        ActionExecutor executor = new ActionExecutor(this, sessions, new CooldownStore(),
+                ActionTextResolver.parsingOnly(items::parse), logger, ActionExecutor.DEFAULT_MAX_DEPTH);
+
         PluginManager plugins = getServer().getPluginManager();
+        plugins.registerEvents(executor, this);
         plugins.registerEvents(new InventoryClickListener(this, menuService.registry(), sessions,
-                InventoryClickListener.Dispatcher.NONE), this);
+                executor::dispatch), this);
         plugins.registerEvents(new InventoryDragListener(), this);
         plugins.registerEvents(new InventoryCloseListener(sessions), this);
         plugins.registerEvents(new PlayerInteractListener(this, menuService.registry(), sessions, items, logger), this);

@@ -319,7 +319,14 @@ at the input boundary.
 
 `ActionExecutor` runs a list for a player. `DELAY` means execution cannot be a simple loop:
 
-- Walk the list until a `DELAY`, then schedule the remainder and return.
+- Walk the list until a `DELAY`, then schedule the remainder and return. The sequence ends as
+  soon as nothing executable remains, so a trailing `DELAY` does not hold the player pending.
+- **`ActionExecutor` owns quit cancellation itself**, through its own `PlayerQuitEvent` handler,
+  rather than `PlayerQuitListener` doing it. Pending state is not session state (§9.2 of SPEC),
+  and routing cancellation through the session listener would invite re-coupling the two.
+- Cancellation on quit is deliberate rather than checking `isOnline()` on resume: a task holding
+  the old `Player` object would see a UUID-matched rejoin as online and run against a stale
+  entity handle.
 - One pending sequence **per player**. A click while one is pending is ignored.
 - Logout cancels pending sequences. Death and world change do not.
 - Total delay is validated at parse time and clamped with a warning, not at run time.
@@ -520,7 +527,7 @@ described `null`/`unset` for unbinding when the code accepted `none`/`null`.
 | `AsyncChatListener` | Editor text input: cancel the message, hop to the main thread |
 | `PlayerInteractListener` | Bound-item detection and menu opening |
 | `PlayerJoinListener` | `joinMenu`, `giveItemOnJoin`, update notification |
-| `PlayerQuitListener` | Session cleanup, cancel pending sequences |
+| `PlayerQuitListener` | Session cleanup |
 
 **Listeners hold no per-event state in fields.** 1.x stored the event player, inventory,
 and slot as instance fields on singleton listeners, then used `this.player` inside a

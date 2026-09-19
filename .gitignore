@@ -35,3 +35,6 @@ build/
 
 # run-paper test server
 run/
+
+# Scratch handoff state between sessions; never committed
+paused_session.md

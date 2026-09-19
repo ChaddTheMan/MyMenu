@@ -263,7 +263,7 @@ final class MenuYamlFormat {
                 : readTemplate(fields.get("hiddenFallback"), "'hiddenFallback'", where + " hiddenFallback", problems);
         return new MenuItem(
                 readTemplate(icon, "'item'", where + " item", problems),
-                readActions(fields.get("actions")),
+                readActions(fields.get("actions"), where),
                 optText(fields, "viewPermission"),
                 hiddenFallback,
                 optKey(fields, "clickSound"),
@@ -303,22 +303,25 @@ final class MenuYamlFormat {
                 glow);
     }
 
-    private Map<ClickKey, List<Action>> readActions(@Nullable Object node) throws Malformed {
+    private Map<ClickKey, List<Action>> readActions(@Nullable Object node, String where) throws Malformed {
         Map<ClickKey, List<Action>> result = new EnumMap<>(ClickKey.class);
         if (node == null) {
             return result;
         }
         for (Map.Entry<String, Object> entry : mapping(node, "'actions'").entrySet()) {
             ClickKey key = parseEnum(entry.getKey(), "click type", ClickKey.class);
-            List<Action> list = new ArrayList<>();
+            List<Action> list = List.of();
             // A bare "LEFT:" is an empty list, which still stops the OTHER fallback.
             if (entry.getValue() != null) {
                 if (!(entry.getValue() instanceof List<?> raw)) {
                     throw new Malformed("the actions under " + key + " are not a list");
                 }
+                List<Map<String, Object>> entries = new ArrayList<>(raw.size());
                 for (Object action : raw) {
-                    list.add(actions.read(mapping(action, "an action under " + key)));
+                    entries.add(mapping(action, "an action under " + key));
                 }
+                // The codec sees the whole list so list-level rules (the delay cap) apply at parse time.
+                list = actions.readList(entries, where + " " + key);
             }
             result.put(key, list);
         }

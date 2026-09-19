@@ -19,6 +19,8 @@ package me.chaddtheman.mymenu.storage;
 
 import me.chaddtheman.mymenu.action.Action;
 
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -29,13 +31,33 @@ import java.util.Map;
  * {@code actions:} structure itself (click keys, lists, one mapping per entry) and hands each
  * entry here without knowing what an action is.
  *
- * <p>TODO(stage 6): {@code ActionParser} implements this. Until then {@link #NONE} is used, and
- * any stored action is a load error for its slot rather than something silently dropped.
+ * <p>{@code ActionParser} implements this. {@link #NONE} exists for builds and probes that
+ * carry no action types; under it any stored action is a load error for its slot rather than
+ * something silently dropped.
+ *
+ * <p>Lists go through {@link #readList} rather than one {@link #read} per entry, because the
+ * one list-level rule, the cap on a list's total delay (SPEC §9.2), has to be applied at parse
+ * time and cannot be seen from a single entry.
  */
 public interface ActionCodec {
 
     /** @throws IllegalArgumentException if the entry is not a valid action */
     Action read(Map<String, Object> entry);
+
+    /**
+     * Every entry of one click key's list, in order. The default reads each entry; an
+     * implementation may also apply list-level rules. {@code where} names the menu, slot and
+     * key for any warning the codec logs.
+     *
+     * @throws IllegalArgumentException if any entry is not a valid action
+     */
+    default List<Action> readList(List<Map<String, Object>> entries, String where) {
+        List<Action> actions = new ArrayList<>(entries.size());
+        for (Map<String, Object> entry : entries) {
+            actions.add(read(entry));
+        }
+        return actions;
+    }
 
     /** Must return a new, mutable map on every call; see {@code MenuYamlFormat#dump}. */
     Map<String, Object> write(Action action);

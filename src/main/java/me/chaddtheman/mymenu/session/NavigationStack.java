@@ -27,10 +27,14 @@ import java.util.Optional;
  * <p>Depth is capped. Two menus that link to each other would otherwise grow the stack by one
  * entry per hop for as long as the player keeps clicking, and nobody ever goes back that far.
  * When the cap is hit the oldest entry is dropped, not the newest.
+ *
+ * <p>{@link #MAX_DEPTH} is the hard ceiling; {@code navigation.maxDepth} is clamped to it, so
+ * the drop-oldest rule is an invariant that is never reached in practice rather than a
+ * behaviour an over-large config value could switch on (DECISIONS #83).
  */
 public final class NavigationStack {
 
-    static final int MAX_DEPTH = 32;
+    public static final int MAX_DEPTH = 32;
 
     private final ArrayDeque<String> names = new ArrayDeque<>();
 

@@ -943,6 +943,84 @@ while a menu is open.
 `/bukkit:reload` makes it worse: the fresh plugin instance loads a new `MenuHolder` class, so the
 old holders are not `instanceof` it and the new listeners ignore them.
 
+### 82. The storage codec reads whole action lists so the delay cap can be applied at parse time
+**Old:** n/a.
+**New:** `ActionCodec` gained `readList(entries, where)`, defaulting to one `read` per entry, and
+`MenuYamlFormat.readActions` calls it once per click key instead of calling `read` in a loop.
+`ActionParser` overrides it to sum the `DELAY` ticks and, when they exceed
+`actions.maxTotalDelaySeconds`, shorten the delay that crosses the cap to what remains and zero
+every later one, logging one warning naming the menu, slot and key. Zeroed delays stay in the
+list as `DELAY 0` rather than being removed; the next save writes the clamped list.
+**Why:** SPEC §9.2 caps the total per list, clamps stored lists with a warning, and forbids a
+run-time check. The codec was per entry and the format assembled the list, so no entry could see
+the total; clamping in the executor was the run-time check the spec forbids. `storage/` was off
+the stage 6 allowlist and the widening was approved for exactly this. Keeping the zeroed entries
+means the action count and order an admin wrote are preserved in the file, so what happened is
+visible in the file rather than only in a log line. A `DELAY 0` still yields to the next tick.
+
+### 83. `navigation.maxDepth` is enforced by the executor; `NavigationStack.MAX_DEPTH` is dead
+**Old:** n/a.
+**New:** Before a `MENU` action navigates, `ActionExecutor` reads the current session's history
+size and, if it is at or above `maxDepth` (default 10), logs a warning and does nothing, as SPEC
+§9.3 says. The stack therefore never holds more than `maxDepth` entries. Stage 5's
+`NavigationStack.MAX_DEPTH = 32`, which silently drops the oldest entry, is unreachable while
+`maxDepth` is at most 32 and should be deleted when `session/` is next open.
+**Why:** Stage 5 wrote the stack before reading §9.3, and `session/` was off the stage 6
+allowlist, so the spec's behaviour had to be added in front of the stack rather than inside it.
+Two caps with different behaviour is one too many; the spec's is the one that stays. Until the
+constant is removed, a `maxDepth` above 32 would silently fall back to the drop-oldest rule,
+which is why the config key's upper bound should be checked when stage 7 reads it.
+
+**Correction (2026-09-19, review of stage 6):** `MAX_DEPTH` is retained by design, not deleted.
+`ActionExecutor.setMaxDepth` clamps its argument to 1..`NavigationStack.MAX_DEPTH` (now public)
+with a warning, so the stack's ceiling is an enforced invariant and an admin setting a larger
+`navigation.maxDepth` gets the ceiling rather than silently dropped history.
+
+### 84. Pending action sequences are cancelled by a quit handler on `ActionExecutor` itself
+**Old:** 1.x had no delays, so nothing to cancel.
+**New:** `ActionExecutor implements Listener` and cancels the player's pending task on
+`PlayerQuitEvent` at `MONITOR`. `PlayerQuitListener` is untouched and still handles sessions
+only. The map of pending tasks is keyed by UUID and lives on the executor, not on `ViewSession`.
+**Why:** ARCHITECTURE §9 lists "cancel pending sequences" under `PlayerQuitListener`. That file
+was off the stage 6 allowlist, and keeping the map and the only code that removes entries from
+it in one class is the better shape anyway: the thing that owns the state owns its cleanup, and
+nothing else needs a reference to the executor. The map is deliberately not session state
+because SPEC §9.2 requires a sequence to continue through death, and death ends the session.
+ARCHITECTURE §9 should be read with this entry in mind; it was not edited.
+
+### 85. The `!` shorthand produces an elevated command with no permission nodes
+**Old:** 1.x opped the player, so there was no node list to carry.
+**New:** `ActionParser.parseShorthand("!cmd")` yields `PLAYER_ELEVATED` with an empty
+`permissions` list. `Action.ElevatedCommand` accepts the empty list. Nodes are attached
+through the property editor in stage 8. An elevated command with no nodes runs exactly as a
+`PLAYER` command would.
+**Why:** SPEC §3.3 and ARCHITECTURE §10 define the four prefixes but no syntax for a node list
+on the `!` line, and inventing one (a separator, a bracket list) would put grammar into chat
+input that the editor already has a GUI for. An empty grant is harmless: the player gains
+nothing they did not have.
+
+### 86. A step that throws ends its list; sound and cooldown are taken before the list runs
+**Old:** 1.x ran commands in a loop with no error handling; one exception aborted the click
+with a stack trace and no cleanup.
+**New:** `ActionExecutor` catches a `RuntimeException` from any step, logs it with the action
+and player, and stops the list; the pending entry is never left set. The click sound plays and
+the cooldown starts when the click is accepted, before the first action, and both apply to an
+empty list too. A click during a pending sequence is dropped before the cooldown is consulted,
+so it does not consume the cooldown.
+**Why:** Later steps are written assuming the earlier ones ran (`take money` then `give item`),
+so continuing past a failure is the wrong default. Taking the cooldown first is the only order
+that cannot be gamed: if it were taken on success, a command that fails could be retried without
+limit. The sound plays on acceptance because it is feedback for the click, not for the result.
+`Player#performCommand` declares `CommandException`, which is unchecked, so the catch is the
+only place a plugin's failing command surfaces.
+
+**Correction (2026-09-19, review of stage 6):** two of the three choices were reversed on review;
+SPEC §8.4 and §9.2 were updated to say so. An empty action list plays no sound and starts no
+cooldown: it exists to say "this click does nothing" and to stop the `OTHER` fallback, and
+feedback plus a penalty contradicts that, as well as differing from a slot with no keys at all.
+A sequence ends as soon as nothing executable remains, so a trailing `DELAY` does not hold the
+player pending with nothing to run. The throw-stops-the-list rule stands.
+
 ---
 
 ## Template for new entries

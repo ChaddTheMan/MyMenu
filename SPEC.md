@@ -420,6 +420,12 @@ Actions are keyed by click type. Recognised keys:
 type has its own key, that list runs; otherwise `OTHER` runs; otherwise nothing happens
 and the menu stays open.
 
+An **empty list under a key** is not the same as an absent key: an absent key falls through to
+`OTHER`, while an empty list stops the fallback and means "this click type does nothing". Such a
+click therefore plays **no sound and starts no cooldown** — feedback and a cooldown penalty
+would contradict the one thing an empty list is for, and would make it behave differently from a
+display-only item with no keys at all.
+
 **`DOUBLE_CLICK` never falls through to `OTHER`.** It runs only when explicitly keyed.
 The client sends a `LEFT` click before a `DOUBLE_CLICK`, so mapping both means both run.
 
@@ -500,6 +506,13 @@ A list containing a `DELAY` suspends and resumes on a later tick.
 
 - Total delay per list is capped by `actions.maxTotalDelaySeconds` (default 30). Stored
   lists exceeding the cap are **clamped with a warning**, never rejected.
+- A sequence ends as soon as nothing executable remains, so a trailing `DELAY` does not hold the
+  player pending with nothing to run. A trailing delay would otherwise work as a crude
+  per-player lockout; cooldowns are the supported mechanism for that, and leaning on delays
+  instead would break whenever pending-sequence handling changed.
+- **A step that throws stops the rest of its list**, and the failure is logged with the action.
+  Later actions routinely depend on earlier ones — give an item, then announce it — so
+  continuing past a failure produces misleading state.
 - A pending sequence is cancelled when the player logs out.
 - A pending sequence continues through death and world change.
 
@@ -520,8 +533,10 @@ A per-player navigation stack.
   back control that visibly does nothing reads as broken, and closing is the natural meaning of
   "back" from the first screen; it also gives admins a close control for free. `BACK` skips
   entries whose menu has since been deleted.
-- Depth is capped by `navigation.maxDepth` (default 10). Exceeding it refuses the action
-  and logs a warning.
+- Depth is capped by `navigation.maxDepth` (default 10), **clamped to 1–32 when read**.
+  Exceeding it refuses the action and logs a warning. The 32 is the navigation stack's own hard
+  ceiling: clamping to it keeps that an enforced invariant rather than something that silently
+  starts dropping history if an admin sets a larger value.
 - Closing a menu outright clears the stack.
 
 `MENU`, `BACK`, and `CLOSE` are scheduled for the next tick, because opening or closing

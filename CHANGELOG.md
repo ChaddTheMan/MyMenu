@@ -14,6 +14,9 @@ internal class names, no package paths, no implementation detail.
 
 ### Added
 
+- Menu items can run commands, send messages, open other menus, go back, close, and pause
+  between steps.
+
 ### Changed
 
 ### Fixed
