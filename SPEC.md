@@ -419,9 +419,14 @@ and the menu stays open.
 **`DOUBLE_CLICK` never falls through to `OTHER`.** It runs only when explicitly keyed.
 The client sends a `LEFT` click before a `DOUBLE_CLICK`, so mapping both means both run.
 
-All clicks and drags inside a menu are cancelled, in both view and edit mode. Items are
-never removed from a menu by a player. Edit mode interprets the cancelled click as an
-editing operation rather than ignoring it; see §11.
+All clicks and drags are cancelled for the **whole view**, top and bottom inventory alike, in
+both view and edit mode. Cancelling only the top half would let a shift-click move an item in
+from the player's own inventory. Items are never removed from a menu by a player.
+
+Edit mode interprets the cancelled click as an editing operation rather than ignoring it; see
+§11. This is how placement works despite cancellation: the click is cancelled, the plugin reads
+what was on the cursor, updates the model, and re-renders. "All clicks cancelled" and "drag an
+item into the slot" only look contradictory until that is stated.
 
 ### 8.4.0 Items that cannot be loaded
 
@@ -493,6 +498,11 @@ A list containing a `DELAY` suspends and resumes on a later tick.
   lists exceeding the cap are **clamped with a warning**, never rejected.
 - A pending sequence is cancelled when the player logs out.
 - A pending sequence continues through death and world change.
+
+**Pending sequences are therefore tracked independently of sessions.** Death closes the
+inventory and ends the session, but must not cancel a running sequence. Hanging sequence state
+off the session would silently break this rule. (World change turns out not to close an
+inventory at all: `InventoryCloseEvent.Reason.TELEPORT` is deprecated and never fires on 26.2.)
 - Only one sequence runs **per player** at a time. A click while one is pending is
   ignored.
 
@@ -502,7 +512,10 @@ A per-player navigation stack.
 
 - `MENU` **pushes**, even if the target is already in the stack. It works after a delay
   even if the player closed the menu.
-- `BACK` pops one entry. With an empty stack it does nothing.
+- `BACK` pops one entry. With an empty stack it **closes the menu and ends the session**. A
+  back control that visibly does nothing reads as broken, and closing is the natural meaning of
+  "back" from the first screen; it also gives admins a close control for free. `BACK` skips
+  entries whose menu has since been deleted.
 - Depth is capped by `navigation.maxDepth` (default 10). Exceeding it refuses the action
   and logs a warning.
 - Closing a menu outright clears the stack.

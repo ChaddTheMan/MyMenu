@@ -873,6 +873,73 @@ to the registry, and neither has another user yet. `TokenReplacer` takes and ret
 `Component`, so stage 9 cannot re-parse a substituted value without changing the interface
 (#72).
 
+**Correction (2026-09-19, stage 5):** the combined lookup now exists. `MenuRegistry.lookup` returns
+`VersionedMenu` from one snapshot and `render` takes it (#76, ARCHITECTURE §4 revision 3).
+
+---
+
+### 76. `VersionedMenu` lives in `render/` for now, and the registry's bare revision lookup is gone
+**Old:** n/a.
+**New:** `MenuRegistry.lookup(name)` returns `Optional<VersionedMenu>` read from one snapshot, and
+`MenuRegistry.revision(name)` no longer exists. `MenuRenderer.render` takes the record. The record
+is in `render/`, so `service/` imports from `render/`.
+**Why:** ARCHITECTURE §4 explains the pairing. What it does not say is where the type sits: its
+natural home is `model/`, which stage 5 was not allowed to touch, and `render/` was the one open
+package both sides already depend on. Removing `revision(name)` closes the only remaining way to
+assemble a mismatched pair; it had no caller. Move the record to `model/` when that package is next
+open; nothing else needs to change.
+
+### 77. The swap-in-flight marker is cleared by a scheduled task, not compared to a tick number
+**Old:** n/a.
+**New:** `markSwap` raises a flag and queues a delay-0 task that lowers it. Validity honours the
+flag while it is up. Nothing in the plugin reads `Bukkit.getCurrentTick()`.
+**Why:** The first draft stored the current tick and honoured the session while the tick matched.
+The stage 5 probe chained 23 delay-0 tasks; they completed in 120 ms of wall time with the tick
+counter reading 4 throughout, so a delay-0 task queued from inside a task runs in the same
+scheduler pass, and "the same tick" covers everything queued behind the current task. The
+reconcile task queued after an `OPEN_NEW` close saw the marker still up and never dropped the
+replaced session, which is exactly the leak §5.1 forbids. A scheduled clear expires at the next
+pass, which is the bound that was meant. Consequence for rule 9: a task queued from an event
+handler runs at the next tick's heartbeat, because packets are processed after it, so "re-render
+on the next tick" holds there; a task queued from inside another task runs after that task, in the
+same tick.
+
+### 78. `TELEPORT` never fires; every close reason but `OPEN_NEW` ends the session
+**Old:** n/a.
+**New:** `SessionManager.closed` keeps the session on `OPEN_NEW` and ends it on every other
+reason, including constants added to the API later. A world change is not a close path at all.
+**Why:** This resolves ARCHITECTURE §5.2's "unverified" note. The 26.2 javadoc marks `TELEPORT`
+deprecated since 1.21.10 with the note that inventories are no longer closed on teleportation, so
+a menu stays open across a teleport or world change and the session stays valid because the holder
+is still open. Listing reasons that end a session would have left the next new constant leaking;
+listing the one that does not cannot.
+
+### 79. Sessions do not store the current menu
+**Old:** n/a.
+**New:** `ViewSession` holds the navigation history and the swap marker, nothing else; the current
+menu is the open inventory's `MenuHolder` name. `EditSession` keeps the menu name only so validity
+can require that the open `EDIT` view is for that menu.
+**Why:** ARCHITECTURE §5 lists "current menu" among the view session's fields. A stored copy can
+disagree with the holder, and when it does there is no way to say which one is right; the holder
+is what the player is looking at. Reading a holder's name is identification (rule 4), not reading
+menu state out of an inventory (rule 3).
+
+### 80. Every click and drag while a menu is open is cancelled, whichever half of the screen it hits
+**Old:** 1.x cancelled clicks in the menu inventory.
+**New:** `InventoryClickListener` and `InventoryDragListener` cancel any click or drag whose view
+has a `MenuHolder` on top, including clicks in the player's own inventory.
+**Why:** SPEC §8.4 says clicks "inside a menu". Shift-clicks, number-key swaps, double-click
+collection and drags all start in the bottom half and reach into the top, so cancelling by
+clicked inventory alone leaks items. The cost is that a player cannot rearrange their inventory
+while a menu is open.
+
+### 81. Open menus are closed on disable
+**Old:** n/a.
+**New:** `onDisable` closes every player's `MenuHolder` inventory before flushing storage.
+**Why:** Once the listeners are unregistered a menu is an ordinary chest whose items can be taken.
+`/bukkit:reload` makes it worse: the fresh plugin instance loads a new `MenuHolder` class, so the
+old holders are not `instanceof` it and the new listeners ignore them.
+
 ---
 
 ## Template for new entries

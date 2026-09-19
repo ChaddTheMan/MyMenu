@@ -119,13 +119,14 @@ public final class MenuRenderer {
     }
 
     /**
-     * @param revision the registry revision recorded beside {@code menu}, read in the same main
-     *                 thread tick; it is what the stale-view check compares against
+     * @param versioned the menu and the registry revision it was read at, taken from one registry
+     *                  lookup; the revision is what the stale-view check later compares against
      */
-    public Inventory render(Menu menu, long revision, Player viewer, ViewMode mode) {
+    public Inventory render(VersionedMenu versioned, Player viewer, ViewMode mode) {
+        Menu menu = versioned.menu();
         TokenReplacer tokens = tokensFor.apply(viewer);
         Component title = tokens.replace(items.parse(menu.title()));
-        MenuHolder holder = new MenuHolder(menu.name(), revision, mode, menu.type(), menu.size(), title);
+        MenuHolder holder = new MenuHolder(menu.name(), versioned.revision(), mode, menu.type(), menu.size(), title);
         Inventory inventory = holder.getInventory();
         for (Map.Entry<Integer, MenuItem> entry : menu.items().entrySet()) {
             ItemStack stack = switch (mode) {

@@ -18,11 +18,21 @@
 package me.chaddtheman.mymenu;
 
 import me.chaddtheman.mymenu.config.PluginConfig;
+import me.chaddtheman.mymenu.listener.InventoryClickListener;
+import me.chaddtheman.mymenu.listener.InventoryCloseListener;
+import me.chaddtheman.mymenu.listener.InventoryDragListener;
+import me.chaddtheman.mymenu.listener.PlayerInteractListener;
+import me.chaddtheman.mymenu.listener.PlayerQuitListener;
 import me.chaddtheman.mymenu.model.Menu;
+import me.chaddtheman.mymenu.render.ItemBuilder;
+import me.chaddtheman.mymenu.render.MenuRenderer;
+import me.chaddtheman.mymenu.render.TokenReplacer;
 import me.chaddtheman.mymenu.service.MenuService;
+import me.chaddtheman.mymenu.session.SessionManager;
 import me.chaddtheman.mymenu.storage.ActionCodec;
 import me.chaddtheman.mymenu.storage.DebouncedMenuWriter;
 import me.chaddtheman.mymenu.storage.YamlMenuStorage;
+import org.bukkit.plugin.PluginManager;
 import org.bukkit.plugin.java.JavaPlugin;
 import org.jspecify.annotations.Nullable;
 import org.slf4j.Logger;
@@ -60,6 +70,7 @@ public final class MyMenu extends JavaPlugin {
     private @Nullable YamlMenuStorage storage;
     private @Nullable DebouncedMenuWriter writer;
     private @Nullable MenuService menuService;
+    private @Nullable SessionManager sessions;
 
     private record Loaded(PluginConfig config, Collection<Menu> menus) {
     }
@@ -82,6 +93,21 @@ public final class MyMenu extends JavaPlugin {
         this.writer = writer;
         this.menuService = menuService;
 
+        // One renderer for the plugin's lifetime: its log-once set is per instance, so a renderer
+        // per open would repeat every unreadable-item warning on every open.
+        ItemBuilder items = new ItemBuilder();
+        MenuRenderer renderer = new MenuRenderer(this, items, viewer -> TokenReplacer.NONE, logger);
+        SessionManager sessions = new SessionManager(this, menuService.registry(), renderer);
+        this.sessions = sessions;
+
+        PluginManager plugins = getServer().getPluginManager();
+        plugins.registerEvents(new InventoryClickListener(this, menuService.registry(), sessions,
+                InventoryClickListener.Dispatcher.NONE), this);
+        plugins.registerEvents(new InventoryDragListener(), this);
+        plugins.registerEvents(new InventoryCloseListener(sessions), this);
+        plugins.registerEvents(new PlayerInteractListener(this, menuService.registry(), sessions, items, logger), this);
+        plugins.registerEvents(new PlayerQuitListener(sessions), this);
+
         CompletableFuture.supplyAsync(() -> PluginConfig.load(getDataPath(), logger))
                 .thenCompose(config -> {
                     storage.setBackupPolicy(config.backupsKeep(), config.backupsMinInterval());
@@ -99,6 +125,17 @@ public final class MyMenu extends JavaPlugin {
 
     @Override
     public void onDisable() {
+        try {
+            // Listeners go with the plugin; a menu left open would become a chest to loot.
+            if (sessions != null) {
+                sessions.closeAll();
+            }
+        } finally {
+            disableStorage();
+        }
+    }
+
+    private void disableStorage() {
         try {
             if (writer != null) {
                 writer.flush();

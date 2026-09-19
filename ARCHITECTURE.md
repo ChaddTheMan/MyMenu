@@ -164,9 +164,14 @@ Models are immutable; see §3.1.
 
 ## 4. Rendering
 
-`MenuRenderer.render(Menu, long revision, Player, ViewMode)` returns a fresh `Inventory`. The
+`MenuRenderer.render(VersionedMenu, Player, ViewMode)` returns a fresh `Inventory`. The
 revision is passed in rather than read, because the renderer has no registry — it is pure with
 respect to the model (§4, last paragraph).
+
+`VersionedMenu(Menu menu, long revision)` is what the registry lookup returns. An earlier
+signature took the menu and its revision as two arguments, which let a caller pass a mismatched
+pair; the pairing is a correctness invariant, so it is a type rather than a convention. Cheap
+before the first caller, awkward after the third.
 
 The steps:
 
@@ -234,8 +239,18 @@ would otherwise invalidate their own next click.
 
 ## 5. Sessions
 
-`SessionManager` holds `ViewSession` (current menu, navigation stack) and `EditSession`
-(menu being edited, slot and property in flight, pending prompt with its timeout task).
+`SessionManager` holds `ViewSession` (navigation stack, plus a bounded swap marker) and
+`EditSession` (menu being edited, slot and property in flight, pending prompt with its timeout
+task).
+
+**`ViewSession` deliberately has no current-menu field.** The open inventory's `MenuHolder`
+already names the menu, so storing it again would be a second source of truth that can disagree
+with the first — the tracked state §5.1 exists to avoid. The current menu is derived.
+
+The swap marker cannot be keyed on a tick number: delay-0 tasks queued from inside a task run in
+the same scheduler pass, so `Bukkit.getCurrentTick()` does not advance between them (measured:
+23 chained tasks over 120 ms, counter unchanged). The marker is cleared by a scheduled task
+instead.
 
 ### 5.1 Derive state, do not trust tracked state
 

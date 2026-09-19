@@ -18,13 +18,13 @@
 package me.chaddtheman.mymenu.service;
 
 import me.chaddtheman.mymenu.model.Menu;
+import me.chaddtheman.mymenu.render.VersionedMenu;
 
 import java.util.Collection;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Optional;
-import java.util.OptionalLong;
 import java.util.Set;
 import java.util.SortedMap;
 import java.util.TreeMap;
@@ -100,9 +100,15 @@ public final class MenuRegistry {
         return Optional.ofNullable(state.menus().get(name));
     }
 
-    public OptionalLong revision(String name) {
-        Long revision = state.revisions().get(name);
-        return revision == null ? OptionalLong.empty() : OptionalLong.of(revision);
+    /**
+     * The menu and its revision from one snapshot, so the pair cannot straddle a write. This is
+     * the lookup rendering and the stale-view check use; {@link #find} is for callers that only
+     * need the menu.
+     */
+    public Optional<VersionedMenu> lookup(String name) {
+        State current = state;
+        Menu menu = current.menus().get(name);
+        return menu == null ? Optional.empty() : Optional.of(new VersionedMenu(menu, current.revisions().get(name)));
     }
 
     public boolean contains(String name) {
