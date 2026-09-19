@@ -629,6 +629,10 @@ decision. On 26.2, `org.bukkit.Sound` is an interface (`extends OldEnum<Sound>`)
 enum, so storing it would tie the model to a registry lookup and a deprecated `valueOf`
 path. A `Key` is plain data. Stage 3 decides the YAML spelling. SPEC §5.3 shows
 `UI_BUTTON_CLICK`; storing `minecraft:ui.button.click` would be the direct form.
+**Corrected 2026-09-18:** settled before stage 3; SPEC §5.3 and §8.3 now show the key form.
+`menus.yml` holds keys only; a bare `UI_BUTTON_CLICK` in the file is a load error for that
+slot. Accepting bare names is an editor input affordance (stage 8). Keys are not checked
+against the sound registry, because resource packs add sounds the server does not know.
 
 ### 63. Layout changes that would strand items are refused
 **Old:** `setRows()` computed a size from the unclamped parameter (ARCHITECTURE §12).
@@ -655,6 +659,149 @@ split, `MenuService` only records intent and never handles a future. The interfa
 by the service that calls it, so stage 3 depends on `service/` rather than the reverse.
 `markDeleted` receives the removed `Menu` because the delete backup (SPEC §3.5) needs its
 contents after the registry has dropped it.
+**Corrected 2026-09-18:** at stage 3, `markDirty(name)` became `markDirty(Menu)`, for the
+same reason `markDeleted` takes a `Menu`: the writer holds the newest version itself and never
+reads the registry back. That also removed a construction cycle (writer → `MenuService` →
+registry → writer). See #65.
+
+### 65. `MenuStorage` as built differs from ARCHITECTURE §7's sketch
+**Old:** n/a.
+**New:** `loadAll()`, `saveAll(Collection<Menu>)` (add or replace each by name),
+`delete(Menu)`, `isDegraded()`, `flush()`, `close()`. There is no `save(Menu)`, and `delete`
+takes the menu rather than its name. `YamlMenuStorage` keeps its own image of what the file
+should hold, confined to its thread, instead of reading the registry. `flush()` on storage
+means "wait for the queue and retry a failed write once"; the pending batch lives in
+`DebouncedMenuWriter`, whose own `flush()` submits it and then calls storage's.
+**Why:** The sketch predates debouncing. A debounce window yields a batch, and for YAML each
+call rewrites the whole file, so `save(Menu)` per menu would mean several rewrites per batch
+and was dropped as unused. `delete(String)` could not write the delete backup, because the
+registry has already dropped the menu (#64). The image lets a YAML write proceed without the
+registry, which lives behind `MenuService`.
+
+The writer's timer starts at the first change and is **not** restarted by later ones. A
+classic debounce waits for a quiet gap, so someone editing faster than
+`writeDebounceMillis` for ten minutes would write nothing for ten minutes. This one writes at
+most one interval after the first unsaved change. The timer is a Bukkit task. That is safe even
+though the scheduler stops during disable, because `flush()` cancels the timer and submits the
+batch directly. Deletes are submitted before saves, so deleting and recreating a name within
+one window lands in the right order.
+
+### 66. Readable or serialized is decided once, at capture, by a round trip
+**Old:** n/a (1.x stored a material name).
+**New:** The writer never chooses a form; it writes whichever `ItemTemplate` variant it is
+given. The choice is made when a real `ItemStack` becomes a template
+(`ItemSerializer.capture`). Build the readable candidate: material, amount, custom name and
+lore converted to `&`-code strings, glint override as `glow`. Turn it back into an
+`ItemStack` and keep it only if `candidate.equals(original)`. Otherwise store the bytes. A
+glint override of `true` is moved out of the bytes into `glow`, or turning glow off in the
+editor would have no effect. A name or lore line starting with `<!mm>` also forces bytes, since
+it would be re-parsed as MiniMessage at render time.
+**Why:** `ItemStack#equals` compares type, amount and every data component, so the check
+fails closed. Anything the readable fields cannot hold makes the stacks unequal, including
+components added in future versions. A list of "unsupported components" would fail open and
+need updating every release. A false "no" costs only readability; a false "yes" would lose
+data, and the round trip cannot produce one.
+**Cost, and a dependency on stage 9:** text uses Adventure's legacy serializer (`&`, `&#hex`)
+with no italic handling. So an item whose name carries an explicit `italic: false` goes to
+bytes. That is common for items made by other plugins. If `TextService` renders readable names
+non-italic by default, capture must apply the same rule, or those items will be stored as
+bytes needlessly. Verified at runtime on 26.2: plain, named-with-lore and glint-only items
+came out readable; an enchanted sword, an `italic: false` name, `R&D` and a `<!mm>` name came
+out as bytes. The sword's bytes deserialised back equal to the original minus its glint.
+
+### 67. What a malformed `menus.yml` does
+**Old:** One unknown material threw and stopped the whole load.
+**New:** A problem in a menu's own fields (name, type, rows, author UUID, bound item) skips
+that menu. A problem inside a slot skips that slot, and a slot outside the layout is caught
+before the `Menu` constructor sees it, so the rest of the menu loads. An unknown key is
+reported but the entry is kept. A YAML syntax error or a duplicate key loads nothing. **Any**
+of these puts storage into the degraded state. Every message names the menu and the slot.
+Both catch boundaries catch `RuntimeException`, not only the expected types.
+**Why:** Unknown keys degrade because the next save would drop them silently; a typo such as
+`itemlore` would lose the lore. Duplicate keys are rejected (`allowDuplicateKeys=false`)
+because SnakeYAML otherwise lets the second copy silently win.
+
+Menus are **built on the main thread**, not the storage thread. The YAML is read and parsed
+off-thread, handed to the main thread to become models, then handed back. `Material.isItem()`
+on 26.2 calls `asItemType()`, which is a registry lookup, and `ItemTemplate.Descriptive`'s
+constructor calls it. The other threading rules forbid Bukkit API off the main thread, and the
+registry's lookup cache is not known to be thread-safe.
+
+Serialized items are **carried as bytes and not deserialised at load**. A blob that fails to
+deserialise, perhaps because of a datapack enchantment that is not loaded yet, is kept and
+saved back unchanged. It is not skipped. The renderer (stage 4) must handle a blob that fails.
+Invalid base64 is still a load error.
+
+Until stage 6, `ActionCodec.NONE` makes any stored action a load error for its slot. That
+degrades rather than dropping the action. Empty action lists (`LEFT: []`, or a bare `LEFT:`)
+load and save.
+
+Verified 2026-09-18 with a hand-written file containing a bad material, `rows: 9`, a slot at
+40 in a one-row chest, `serialized` beside `material`, an action, a typo key, a bare sound
+name, the slot key `x5`, invalid base64, `amount: 500`, `AIR`, and the menu name `Bad Name`.
+Twelve problems were logged, each naming its location. Four menus loaded, with exactly their
+good slots. Edit and create were refused with `STORAGE_DEGRADED`. `menus.yml` was
+byte-identical afterwards, and no backup was taken.
+
+### 68. What a failed write leaves behind
+**Old:** n/a.
+**New:** A write is: render the text, copy the live file to `backups/` (subject to the rate
+limit), write `menus.yml.tmp` and `force()` it, then atomically move it over `menus.yml`. If
+any step fails, the live file has not been opened for writing and still holds the last good
+save. The temp file is deleted if possible. Storage marks itself degraded, logs the cause, and
+online holders of `MyMenu.admin.reload` are told. The failed changes stay in storage's image,
+flagged unwritten. `flush()` at shutdown retries once. `loadAll()` refuses to run while the
+image is unwritten, because re-reading would discard those changes; stage 7's reload must
+respect that. A clean load clears the write-degraded flag.
+
+A failed **backup** is treated as a failed write, and the live file is not replaced. A failed
+**delete backup** leaves the menu in `menus.yml`, so it returns on the next load rather than
+vanishing without its promised backup.
+**Why:** SPEC §12 names runtime write failures as a cause of degradation but not what happens
+to the edits. Keeping them and retrying at shutdown is the only choice that does not quietly
+lose work. Refusing further edits keeps the pile of unsaved work from growing.
+
+Verified 2026-09-18 by putting a directory at `menus.yml.tmp`. An empty directory: the write
+failed, cleanup removed the directory, and the shutdown retry saved the edits, with a backup
+identical to the pre-run file. A non-empty directory: both attempts failed, and `menus.yml` was
+byte-identical afterwards. In both cases a delete and a create attempted after the failure were
+refused, and the server stopped cleanly.
+
+### 69. Config is read off the main thread; SPEC §5.1 has a duplicate key
+**Old:** n/a.
+**New:** `config.yml` is read by `PluginConfig.load` on the common fork-join pool during
+enable, not by `JavaPlugin#getConfig()`. The bundled default contains only the keys that are
+implemented so far (`storage.writeDebounceMillis`, `backups.keep`,
+`backups.minIntervalSeconds`). `writeDebounceMillis` sits under the one `storage:` block. Bad
+values fall back to defaults with a warning, and the file is never rewritten. Until the first
+load lands, `MenuService` refuses mutations with a new reason, `NOT_LOADED`.
+**Why:** `getConfig()` reads synchronously on whatever thread calls it, which would be a
+second exception to hard rule 2. SPEC §5.1's example has two top-level `storage:` keys. That
+is rejected under duplicate-key checking. With SnakeYAML's default settings the second block
+silently replaces the first, which would lose `storage.type`. Keys are added to the default file in the
+stage that reads them; shipping unread keys implies settings that do nothing. The load gate
+exists because menus now arrive a tick or more after enable (the log shows them after
+`Done`), and an edit in that window would be overwritten when the load landed.
+
+### 70. Readable text is non-italic unless it says otherwise; capture matches
+**Old:** n/a.
+**New:** Readable text renders with italic explicitly disabled unless the text itself sets it.
+`ItemSerializer.capture` builds its readable candidate the same way, so the round trip in #66
+compares like with like.
+**Why:** Minecraft italicises custom item names by default. That is almost never wanted, so
+practically every plugin turns it off. `NOTES.md` flagged this as a stage 9 dependency of #66:
+if stage 9 renders non-italic but capture does not, items carrying `italic: false` are stored as
+bytes for a difference nobody asked for. Deciding it now means stage 9 inherits the constraint
+rather than inventing a contradictory one. SPEC §10.2.
+
+### 71. `/mymenu reload` has an explicit discard form
+**Old:** n/a.
+**New:** `/mymenu reload` accepts an explicit discard form. It drops unwritten changes and
+re-reads from disk. The ordinary refusal message names that form.
+**Why:** #68 blocks `loadAll()` while changes are unwritten, which is right for a transient
+failure. If the fault is permanent (disk full, permissions, a stray file at the temp path), the
+admin can neither write nor reload, and loses the changes at shutdown anyway. The lock needs a
+deliberate way out. SPEC §12.
 
 ---
 

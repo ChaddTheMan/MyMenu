@@ -25,6 +25,7 @@ import me.chaddtheman.mymenu.service.MutationResult.Refused;
 import org.bukkit.Bukkit;
 import org.jspecify.annotations.Nullable;
 
+import java.util.Collection;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
@@ -55,6 +56,12 @@ import java.util.function.UnaryOperator;
  * change that throws leaves the registry exactly as it was. Persistence is told last and only
  * records intent; the debounced writer decides when to write.
  *
+ * <h2>Before the first load</h2>
+ *
+ * Menus load asynchronously, so for a moment after enable the registry is empty and storage
+ * has not yet decided whether it is degraded. A mutation in that window would be overwritten
+ * by the load when it lands, so mutations are refused until {@link #replaceAll} has run.
+ *
  * <p>Main thread only. That is checked rather than assumed, because a mutation from an async
  * chat handler that forgot to hop back would otherwise work almost every time.
  */
@@ -62,6 +69,9 @@ public final class MenuService {
 
     private final MenuRegistry registry = new MenuRegistry();
     private final MenuPersistence persistence;
+
+    // Main thread only, like every write here.
+    private boolean loaded;
 
     public MenuService(MenuPersistence persistence) {
         this.persistence = Objects.requireNonNull(persistence, "persistence");
@@ -76,15 +86,30 @@ public final class MenuService {
         return persistence.isDegraded();
     }
 
+    public boolean isLoaded() {
+        return loaded;
+    }
+
+    /**
+     * Installs what storage loaded, replacing everything registered, and opens the gate. Every
+     * menu gets a fresh revision, so views rendered before a reload are all detected as stale.
+     * Nothing is marked dirty: these menus came from storage.
+     */
+    public void replaceAll(Collection<Menu> menus) {
+        requireMainThread();
+        registry.replaceAll(menus);
+        loaded = true;
+    }
+
     /**
      * @param name must already be normalised and valid; the command layer rejects bad names
      *             with a proper message before they get here
      */
     public MutationResult create(String name, String title, int rows, @Nullable String author,
                                  @Nullable UUID authorUuid) {
-        requireMainThread();
-        if (persistence.isDegraded()) {
-            return new Refused(Reason.STORAGE_DEGRADED);
+        Optional<Refused> refused = gate();
+        if (refused.isPresent()) {
+            return refused.get();
         }
         if (registry.contains(name)) {
             return new Refused(Reason.MENU_EXISTS);
@@ -93,9 +118,9 @@ public final class MenuService {
     }
 
     public MutationResult delete(String name) {
-        requireMainThread();
-        if (persistence.isDegraded()) {
-            return new Refused(Reason.STORAGE_DEGRADED);
+        Optional<Refused> refused = gate();
+        if (refused.isPresent()) {
+            return refused.get();
         }
         Optional<Menu> removed = registry.remove(name);
         if (removed.isEmpty()) {
@@ -116,9 +141,9 @@ public final class MenuService {
      *         menu. Layout changes that may strand items go through {@link #changeLayout}.
      */
     public MutationResult update(String name, UnaryOperator<Menu> change) {
-        requireMainThread();
-        if (persistence.isDegraded()) {
-            return new Refused(Reason.STORAGE_DEGRADED);
+        Optional<Refused> refused = gate();
+        if (refused.isPresent()) {
+            return refused.get();
         }
         Optional<Menu> current = registry.find(name);
         if (current.isEmpty()) {
@@ -136,9 +161,9 @@ public final class MenuService {
 
     /** Changes type and rows, refusing if any occupied slot would fall outside the new layout. */
     public MutationResult changeLayout(String name, MenuType type, int rows) {
-        requireMainThread();
-        if (persistence.isDegraded()) {
-            return new Refused(Reason.STORAGE_DEGRADED);
+        Optional<Refused> refused = gate();
+        if (refused.isPresent()) {
+            return refused.get();
         }
         Optional<Menu> current = registry.find(name);
         if (current.isEmpty()) {
@@ -150,9 +175,21 @@ public final class MenuService {
         return update(name, menu -> menu.withLayout(type, rows));
     }
 
+    /** The checks every mutation makes before it looks at a menu. */
+    private Optional<Refused> gate() {
+        requireMainThread();
+        if (!loaded) {
+            return Optional.of(new Refused(Reason.NOT_LOADED));
+        }
+        if (persistence.isDegraded()) {
+            return Optional.of(new Refused(Reason.STORAGE_DEGRADED));
+        }
+        return Optional.empty();
+    }
+
     private MutationResult commit(Menu menu) {
         registry.put(menu);
-        persistence.markDirty(menu.name());
+        persistence.markDirty(menu);
         return new Applied(menu);
     }
 

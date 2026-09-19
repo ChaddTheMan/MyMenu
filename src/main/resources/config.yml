@@ -1,0 +1,10 @@
+# MyMenu configuration
+configVersion: 1
+
+storage:
+  # After the first change in a burst of edits, wait this long, then save them all at once.
+  writeDebounceMillis: 2000
+
+backups:
+  keep: 10                # save backups kept in backups/; deleted-menu backups are never removed
+  minIntervalSeconds: 300 # at most one save backup per this many seconds

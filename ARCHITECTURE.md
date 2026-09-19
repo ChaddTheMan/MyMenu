@@ -294,19 +294,42 @@ exception between the two leaves a player opped.
 ```java
 public interface MenuStorage {
     CompletableFuture<Collection<Menu>> loadAll();
-    CompletableFuture<Void> save(Menu menu);
-    CompletableFuture<Void> delete(String name);
-    CompletableFuture<Void> saveAll(Collection<Menu> menus);
+    CompletableFuture<Void> saveAll(Collection<Menu> menus);   // add or replace by name
+    CompletableFuture<Void> delete(Menu menu);
     boolean isDegraded();
-    void flush();          // write everything pending, block until the queue drains
+    void flush();          // drain the queue; retry a failed write once
     void close();
 }
+```
 
-The executor is **single-threaded**, which gives write ordering for free: two rapid
-mutations to the same menu cannot land out of order.
+**Revised at stage 3.** An earlier sketch had `save(Menu)` and `delete(String)`, and predated
+debouncing. A debounce window yields a *batch*, and a YAML write rewrites the whole file, so
+per-menu saves would mean several rewrites per batch; `save(Menu)` was dropped as unused.
+`delete` takes the `Menu` rather than its name because the delete backup needs the contents
+after the registry has already dropped it (#64).
 
-`save(Menu)` under YAML rewrites the whole file, so the writer needs every menu. Since
-models are immutable (§3.1), that snapshot is a copy of references and cannot tear. The
+`flush()` on storage waits for the queue and retries a failed write once. The pending batch
+itself lives in `DebouncedMenuWriter`, whose own `flush()` submits the batch and then calls
+storage's.
+
+`YamlMenuStorage` keeps its own image of what the file should contain, confined to its
+thread, rather than reading the registry — the registry lives behind `MenuService`, and a
+write must be able to proceed without it.
+
+The executor is **single-threaded**, which gives write ordering for free: two rapid mutations
+to the same menu cannot land out of order. Deletes are submitted before saves, so deleting and
+recreating a name inside one window lands in the right order.
+
+**The debounce timer starts at the first unsaved change and is not restarted by later ones.**
+A classic debounce waits for a quiet gap, so an admin editing continuously would write nothing
+for as long as they kept editing. This bounds exposure to one interval after the first change.
+
+**Menus are constructed on the main thread**, not the storage thread. YAML is read and parsed
+off-thread, handed to the main thread to become models, then handed back. `Material.isItem()`
+on 26.2 resolves through a registry lookup, and `ItemTemplate.Descriptive`'s constructor calls
+it — a Bukkit API call hiding inside what looks like a pure model constructor.
+
+Since models are immutable (§3.1), a snapshot is a copy of references and cannot tear, so the
 earlier requirement to take it on the main thread before the async hop no longer applies.
 ```
 

@@ -1,35 +1,53 @@
 # NOTES — session state (overwritten each session)
 
 ## Current stage
-Stage 2 complete (not committed, awaiting review): model classes, `MenuRegistry`,
-`MenuService`. Next: stage 3 (`ItemSerializer`, `YamlMenuStorage`, the storage interface).
+Stage 3 complete (not committed, awaiting review): `ItemSerializer`, `MenuStorage`,
+`YamlMenuStorage`, `MenuYamlFormat`, `BackupWriter`, `DebouncedMenuWriter`, `ActionCodec` seam,
+`PluginConfig` + default `config.yml`, and `MenuService` wired up in `MyMenu`. Next: stage 4
+(`MenuHolder`, `MenuRenderer`, `ItemBuilder`), and only after the user signs off on stage 3.
 
-## Verified working (2026-09-18, Paper 26.2-124, Temurin Java 25.0.4.1, Gradle 9.7.1)
-- `./gradlew build` is clean with no warnings, stage 2 included.
-- Checked in the 26.2 API jar with javap: `ClickType` constants (no `OTHER`), `Sound` is an
-  interface, `Material` is still an enum with `isItem()`/`isAir()`, and
-  `ItemStack#serializeAsBytes` / `ItemStack.deserializeBytes(byte[])` exist. JSpecify
-  `@Nullable` is on the API compile classpath.
-- Stage 1's server-start result still stands. Stage 2 adds nothing that loads at runtime:
-  `MenuService` is not constructed in `MyMenu` yet, because no `MenuPersistence`
-  implementation exists. `runServer` was **not** re-run.
+## Verified working (2026-09-18, Paper 26.2-124, Java 25, Gradle 9.7.1)
+- `./gradlew build` is clean with no warnings. `runServer` starts, loads `menus.yml` after `Done`,
+  and stops cleanly from the console `stop`; the log shows "Menu storage stopped".
+- Verified at runtime with a temporary harness, now deleted:
+  - capture: readable vs serialized chosen as DECISIONS #66 says;
+  - serialized items survive the trip to disk and back;
+  - three same-tick edits produce one write;
+  - an edit made just before shutdown is written by the flush in `onDisable`;
+  - `minIntervalSeconds` and `keep` behave as configured, and delete backups and admin files in
+    `backups/` are never pruned;
+  - the delete backup can be pasted back into `menus.yml`;
+  - a malformed file degrades without aborting the load (DECISIONS #67), refuses edits, and is
+    left byte-identical;
+  - a forced write failure (DECISIONS #68) leaves the live file intact.
+- First run with no files writes the default `config.yml` and creates no `menus.yml` until
+  something is saved.
 
 ## Known broken / open
-- Nothing broken. Nothing in stage 2 has run, only compiled; there are no tests (SPEC §15.4).
-- `MenuPersistence` and `ItemSerializer` are interfaces with no implementation (stage 3).
-  `Action` is an empty interface (stage 6).
-- Stage 3 must pick the YAML spelling for click sounds: `UI_BUTTON_CLICK` as in SPEC §5.3,
-  or the key `minecraft:ui.button.click`. The model stores a key (DECISIONS #62).
-- Stage 6 must map Bukkit's keyless clicks (`CONTROL_DROP`, `SWAP_OFFHAND`, the window-border
-  clicks, `CREATIVE`, `UNKNOWN`) onto `ClickKey`.
-- Registry loading (`replaceAll` for load and reload) is not written. It arrives with storage
-  in stage 3.
-- mysql-connector-j pulls in `protobuf-java` (~1.8 MB). Consider excluding it at stage 11.
-- `InventoryCloseEvent.getReason()` / `Reason.OPEN_NEW` is unverified (needed at stage 5).
-- Off-main-thread suggestions (stage 7) no longer matter for registry safety (DECISIONS #61),
-  but still need checking for anything else a suggestion provider reads.
+- Nothing known broken. There are still no automated tests (SPEC §15.4).
+- **Actions:** `ActionCodec.NONE` makes any stored action a load error, which degrades storage.
+  Stage 6's `ActionParser` must implement `ActionCodec`. Its `write` must return a fresh map each
+  call, or SnakeYAML emits `&id001` aliases (see `MenuYamlFormat.dump`).
+- **Stage 4:** the renderer must handle an opaque blob that fails to deserialise. Blobs are not
+  validated at load (DECISIONS #67).
+- **Stage 7:** reload must flush first. It must abort if `loadAll()` fails with "changes that
+  could not be written". It must also call `setBackupPolicy` / `setDebounce` with the re-read
+  config. Storage's `flush()` blocks and is for `onDisable` only, so reload needs a
+  non-blocking flush.
+- **Stage 9:** `ItemSerializer`'s `&` conversion must match `TextService`'s, especially the
+  italic default (DECISIONS #66).
+- **Stage 10:** the write-failure notice to admins is a hard-coded string (TODO in
+  `DebouncedMenuWriter`).
+- **Stage 11:** MySQL always stores bytes, so it needs a readable-to-`ItemStack` conversion. The
+  one in `ItemSerializer` is private and does no wildcard handling.
+- Carried over: map Bukkit's keyless clicks onto `ClickKey` (stage 6). Verify
+  `InventoryCloseEvent.getReason()` / `Reason.OPEN_NEW` (stage 5). Consider excluding
+  `protobuf-java` from the MySQL driver (stage 11).
 
 ## Needs the user's input
-- Review stage 2, especially DECISIONS #61 (immutable models, which diverges from
-  ARCHITECTURE §3) and #63 (layout changes that would strand items are refused).
-- Settled 2026-09-18: the user confirmed the project stays on Paper 26.2 stable (DECISIONS #58).
+- Review stage 3, especially DECISIONS #65 (the interface differs from ARCHITECTURE §7), #66 (the
+  capture check) and #68 (write-failure semantics).
+- ARCHITECTURE §7's interface block and SPEC §5.1's duplicate `storage:` key (DECISIONS #69) are
+  now out of date or wrong. They were left unedited for the user to decide.
+- Test data in `run/plugins/MyMenu/` is the SPEC §5.3 example with actions removed. It is
+  git-ignored.

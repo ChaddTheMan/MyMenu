@@ -36,6 +36,8 @@ public sealed interface MutationResult {
     }
 
     enum Reason {
+        /** Menus are still loading; an edit now would be overwritten when the load lands. */
+        NOT_LOADED,
         STORAGE_DEGRADED,
         NO_SUCH_MENU,
         MENU_EXISTS,

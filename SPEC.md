@@ -208,6 +208,7 @@ joinMenu: ''              # menu opened on join; empty disables
 
 storage:
   type: YAML              # YAML | MYSQL
+  writeDebounceMillis: 2000
   mysql:
     host: localhost
     port: 3306
@@ -221,9 +222,6 @@ storage:
 backups:
   keep: 10                # rotating save backups; delete backups are exempt
   minIntervalSeconds: 300 # at most one save backup per interval
-
-storage:
-  writeDebounceMillis: 2000
 
 updateCheck:
   enabled: true
@@ -244,6 +242,10 @@ editor:
 
 `joinMenu` is a **single value**, not a per-menu flag. 1.x allowed several menus to set
 `OpenOnJoin` and silently let the last one win.
+
+The bundled default file contains only the keys implemented so far; a key is added in the
+stage that reads it, because shipping unread keys implies settings that do nothing. Bad
+values fall back to defaults with a warning, and the file is never rewritten.
 
 `storage.type` affects **menu data only**. `config.yml` and `messages.yml` are always
 files on disk.
@@ -538,6 +540,12 @@ a nicety.
 `&` codes everywhere, including hex `&#RRGGBB`. MiniMessage is available on any
 admin-authored string prefixed `<!mm>`.
 
+**Readable text renders with italic explicitly disabled** unless the text sets it. Minecraft
+italicises custom item names by default, which is almost never what an admin wants, and
+practically every modern plugin turns it off. The item-capture check (§6) builds its readable
+candidate the same way, so that an item carrying `italic: false` still round-trips to the
+readable form instead of being pushed into bytes for a difference nobody asked for.
+
 ---
 
 ## 11. Editing
@@ -648,6 +656,14 @@ While degraded:
    can still use existing menus.
 4. Every refused command explains why.
 5. `/mymenu reload` re-checks and clears the state if the data now loads and writes.
+
+**Unwritten changes block a reload, and that needs an escape hatch.** When a write has failed,
+the changes stay in memory flagged unwritten, and reloading would discard them — so reload
+refuses. If the underlying fault is permanent (disk full, permissions, a stray file where the
+temp file goes), the admin is otherwise stuck: unable to write, unable to reload, and losing
+the changes at shutdown regardless. `/mymenu reload` therefore accepts an explicit discard
+form that drops the unwritten changes and re-reads from disk, and the ordinary refusal message
+names it.
 
 This exists because the alternative is silent data loss: skip a bad entry, save later, and
 the skipped menus are gone.

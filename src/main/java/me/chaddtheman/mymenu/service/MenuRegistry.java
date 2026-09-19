@@ -135,6 +135,19 @@ public final class MenuRegistry {
         return revision;
     }
 
+    /** Replaces every menu at once, each with a fresh revision; readers never see a mix. */
+    void replaceAll(Collection<Menu> loaded) {
+        TreeMap<String, Menu> menus = new TreeMap<>();
+        Map<String, Long> revisions = new HashMap<>();
+        for (Menu menu : loaded) {
+            if (menus.put(menu.name(), menu) != null) {
+                throw new IllegalArgumentException("duplicate menu " + menu.name());
+            }
+            revisions.put(menu.name(), ++lastRevision);
+        }
+        state = new State(menus, revisions);
+    }
+
     Optional<Menu> remove(String name) {
         State current = state;
         Menu removed = current.menus().get(name);

@@ -27,9 +27,9 @@ import me.chaddtheman.mymenu.model.Menu;
  * edits into one write sits between the two (DECISIONS #64), so {@code MenuService} never
  * waits on, or even sees, a future.
  *
- * <p>TODO(stage 3): implemented by the debounced writer over {@code MenuStorage}. Every method
- * is called on the main thread and must return promptly without doing I/O or throwing: by the
- * time {@link #markDirty} runs, the registry has already changed.
+ * <p>Implemented by {@code storage.DebouncedMenuWriter}. Every method is called on the main
+ * thread and must return promptly without doing I/O or throwing: by the time {@link #markDirty}
+ * runs, the registry has already changed.
  */
 public interface MenuPersistence {
 
@@ -39,8 +39,12 @@ public interface MenuPersistence {
      */
     boolean isDegraded();
 
-    /** The named menu changed; write it after the debounce interval. */
-    void markDirty(String menuName);
+    /**
+     * The menu changed; write it after the debounce interval. Receives the new version rather
+     * than a name so the writer never reads the registry back; a later mark for the same name
+     * replaces an earlier one.
+     */
+    void markDirty(Menu menu);
 
     /**
      * The menu was removed from the registry. Receives the last version so a delete backup

@@ -37,7 +37,8 @@ plugin that happens to share a name.
 - Hopper, dispenser and dropper menus alongside chests
 - PlaceholderAPI support when it is installed
 - All messages moved into `messages.yml` for editing and translation
-- Automatic backups before every save, and before deleting a menu
+- Automatic backups of the menu file (at most one every five minutes by default, ten kept),
+  plus a permanent backup of every deleted menu
 - Tab completion and typed arguments on every command
 
 ### Changed
@@ -46,6 +47,11 @@ plugin that happens to share a name.
   separate `/mm…` commands
 - Binding an item now captures the whole item, including its name, lore and enchantments
 - Menus stay open after a click unless the item is set to close them
+- A mistake in the menu file now skips only the broken menu or item and names where it is,
+  instead of stopping every menu from loading; in-game editing pauses until it is fixed
+- Edits are saved a couple of seconds after you make them, so a burst of changes is written once
+- Items with special data such as enchantments or custom heads are stored in an encoded form;
+  plain items stay readable in the menu file
 - Menu items are placed by dragging a real item into the slot, rather than typing a
   material name
 - Statistics now use bStats; the old MCStats service no longer exists
