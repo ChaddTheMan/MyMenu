@@ -501,8 +501,11 @@ an inventory from inside a click handler is not supported.
 
 ## 10. Text substitution
 
-Substitution order: native wildcards, then PlaceholderAPI (if installed), then colour
-translation.
+Substitution is **parse, then replace**: the admin-authored string is parsed into a
+component first, and wildcard and placeholder tokens are replaced inside it afterwards.
+Native wildcards resolve before PlaceholderAPI. See §10.1 — an earlier draft gave the order
+as "wildcards → PlaceholderAPI → colour translation", which parses substituted values and is
+exploitable.
 
 | Wildcard | Value |
 |---|---|
@@ -526,10 +529,18 @@ commands, mangling any command containing an ampersand.
 
 **Substitution happens after parsing, never before.**
 
-- Substituted values are inserted as data and are never re-parsed as MiniMessage, so
-  player-controlled text (nicknames, placeholder output) cannot inject markup.
-- Values substituted into command strings are sanitised: newlines, carriage returns,
-  semicolons, and leading slashes are stripped.
+For displayed text:
+
+1. Parse the admin-authored string into a component (`&`, `&#hex`, or MiniMessage when
+   prefixed `<!mm>`). Tokens are still literal text at this point.
+2. Replace the tokens inside the parsed component with literal text values. A substituted
+   value becomes a text node and never passes through a parser.
+
+So player-controlled text — nicknames, placeholder output — cannot inject `&c&l`, a hex
+colour, or a MiniMessage tag into text an admin wrote.
+
+For command values there is no parsing: plain substitution, then sanitisation — newlines,
+carriage returns, semicolons, and leading slashes are stripped.
 
 Without this, a player with a crafted nickname could inject arbitrary commands into a
 `CONSOLE` action. This is command injection and is treated as a security requirement, not

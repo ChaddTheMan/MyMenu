@@ -171,8 +171,9 @@ Models are immutable; see §3.1.
    hidden-fallback template if present, otherwise leave the slot empty. **Never compact.**
    In `EDIT` mode, view permissions are **not applied** — an admin must be able to see an
    item to edit it — and permission-gated items are marked in their lore.
-3. Build the `ItemStack`, resolving wildcards and PlaceholderAPI per viewer, translating
-   colour last.
+3. Build the `ItemStack`: **parse** the admin-authored text into a component first, then
+   **replace** the wildcard and placeholder tokens inside it with literal values, per viewer
+   (§10). Never the other way round.
 4. Apply the glint override if `glow` is set.
 5. Stamp the **rendered-icon** persistent-data key on every item.
 
@@ -331,7 +332,6 @@ it — a Bukkit API call hiding inside what looks like a pure model constructor.
 
 Since models are immutable (§3.1), a snapshot is a copy of references and cannot tear, so the
 earlier requirement to take it on the main thread before the async hop no longer applies.
-```
 
 **`YamlMenuStorage`** writes `menus.yml` using the descriptive form where possible and the
 opaque form where necessary. Write order is: **copy the live file into `backups/`, write a
@@ -453,8 +453,8 @@ exactly where classloader leaks originate.
 
 **Resolved at stage 2.** This was an open risk while models were mutable: if Paper computes
 suggestions off the main thread, the `<menu>` provider would read a main-thread-only
-registry. Immutable models plus a concurrent map (§3.1) make that safe regardless of which
-thread Paper uses.
+registry. Immutable models plus copy-on-write publication through a volatile field
+(§3.1) make that safe regardless of which thread Paper uses.
 
 Help text is **generated from the subcommand registry**. 1.x had 14 KB of hand-maintained
 help that had already drifted: it documented `/mmupdate`, which never existed, and
@@ -492,15 +492,30 @@ second.
 
 ## 10. Text
 
-`TextService` owns the order: native wildcards → PlaceholderAPI → colour translation,
-across display names, lore, message text, **and command values**.
+`TextService` owns substitution across display names, lore, message text, **and command
+values**. The order is **parse, then replace** — not replace, then parse.
 
-**Substitution happens after parsing, never before.** Substituted values are inserted as
-data and never re-parsed as MiniMessage. Values entering command strings are sanitised
-(newlines, carriage returns, semicolons, leading slashes). This is command injection
-defence, not polish: placeholder output and nicknames are player-controlled.
+**Corrected after stage 3.** An earlier draft gave the order as "wildcards → PlaceholderAPI
+→ colour translation", which puts parsing *last* and therefore parses whatever was
+substituted. That directly contradicts hard rule 11, and it is exploitable: a player whose
+nickname contains `&c&l`, or placeholder output containing a MiniMessage tag, would inject
+formatting into text an admin wrote.
 
-Colour translation is not applied to command values.
+For displayed text:
+
+1. Parse the admin-authored string into a `Component` (legacy `&` and `&#hex`, or MiniMessage
+   when prefixed `<!mm>`). Wildcard and placeholder tokens are still literal text at this
+   point.
+2. Replace those tokens **inside the parsed component** with literal text values, using
+   Adventure's component text replacement. A substituted value is a text node and never
+   passes through a parser.
+
+For command values there is no component parsing at all: plain string substitution, then
+sanitisation (newlines, carriage returns, semicolons, leading slashes). Colour translation is
+never applied to command values.
+
+This is command-injection defence, not polish: placeholder output and nicknames are
+player-controlled.
 
 PlaceholderAPI is reached only through `PlaceholderApiHook`, which no-ops when absent.
 **Paper plugins have isolated classloaders, so this additionally requires declaring
