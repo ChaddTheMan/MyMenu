@@ -20,8 +20,9 @@ package me.chaddtheman.mymenu.storage;
 import io.papermc.paper.datacomponent.DataComponentTypes;
 import io.papermc.paper.datacomponent.item.ItemLore;
 import me.chaddtheman.mymenu.model.ItemTemplate;
+import me.chaddtheman.mymenu.render.ItemBuilder;
+import me.chaddtheman.mymenu.render.TokenReplacer;
 import net.kyori.adventure.text.Component;
-import net.kyori.adventure.text.serializer.legacy.LegacyComponentSerializer;
 import org.bukkit.inventory.ItemStack;
 import org.jspecify.annotations.Nullable;
 
@@ -30,12 +31,13 @@ import java.util.List;
 import java.util.Objects;
 
 /**
- * Converts items to and from the forms menus store them in.
+ * Converts real items into the forms menus store them in. The reverse direction, template to
+ * item, belongs to {@link ItemBuilder}, which the renderer uses too.
  *
  * <h2>Opaque bytes</h2>
  *
- * {@link #serialize} and {@link #deserialize} use Paper's byte-array format. It runs through the
- * game's own data converters, so a stored item survives a Minecraft upgrade; hand-rolled NBT and
+ * {@link #serialize} uses Paper's byte-array format. It runs through the game's own data
+ * converters, so a stored item survives a Minecraft upgrade; hand-rolled NBT and
  * {@code ConfigurationSerializable} round-trips both lose data on modern items (ARCHITECTURE
  * §7.5).
  *
@@ -52,31 +54,26 @@ import java.util.Objects;
  * fails closed. A false "no" only costs readability; a false "yes" would lose data, and the
  * round trip cannot produce one.
  *
- * <p>The candidate's text goes through the same {@code &}-code conversion used to read it back,
- * so text that does not survive that conversion (a font, a click event, an explicit
- * {@code italic: false}, a literal {@code &c} in a name) also sends the item to bytes.
+ * <p>The candidate is turned back into a stack by {@link ItemBuilder}, the same code that
+ * renders it, so "readable" means "renders as this exact item". That includes the italic rule
+ * (DECISIONS #70): readable text renders non-italic unless it says otherwise, so an item whose
+ * name carries an explicit {@code italic: false} round-trips, and one whose name is italic only
+ * by Minecraft's default, such as an anvil rename, does not and goes to bytes (DECISIONS #73).
+ * Other text the {@code &} format cannot carry (a font, a click event, a literal {@code &c} in a
+ * name) also sends the item to bytes.
  *
- * <p>Main thread only. Deserialising and building stacks reach into server registries.
+ * <p>Main thread only. Building stacks reaches into server registries.
  */
 public final class ItemSerializer {
 
-    /**
-     * The prefix that makes stored text MiniMessage (SPEC §10.2). A captured name starting with
-     * it would be reinterpreted at render time, so such items go to bytes.
-     */
-    private static final String MINIMESSAGE_PREFIX = "<!mm>";
+    private final ItemBuilder builder;
 
-    // TODO(stage 9): must stay the conversion TextService applies to readable items, or captured
-    // items would render differently from the item they were captured from.
-    private final LegacyComponentSerializer legacy =
-            LegacyComponentSerializer.builder().character('&').hexColors().build();
+    public ItemSerializer(ItemBuilder builder) {
+        this.builder = builder;
+    }
 
     public byte[] serialize(ItemStack item) {
         return item.serializeAsBytes();
-    }
-
-    public ItemStack deserialize(byte[] data) {
-        return ItemStack.deserializeBytes(data);
     }
 
     /**
@@ -89,7 +86,7 @@ public final class ItemSerializer {
             throw new IllegalArgumentException("cannot capture an empty item");
         }
         ItemTemplate.Descriptive candidate = readableCandidate(item);
-        if (candidate != null && toItemStack(candidate).equals(item)) {
+        if (candidate != null && builder.build(candidate, TokenReplacer.NONE).equals(item)) {
             return candidate;
         }
         // A forced glint moves out of the bytes into the glow flag, or turning glow off in the
@@ -108,16 +105,17 @@ public final class ItemSerializer {
             return null;
         }
         Component name = item.getData(DataComponentTypes.CUSTOM_NAME);
-        String displayName = name == null ? null : legacy.serialize(name);
-        if (displayName != null && displayName.startsWith(MINIMESSAGE_PREFIX)) {
+        String displayName = name == null ? null : builder.toReadableText(name);
+        // Text starting with the prefix would be re-read as MiniMessage at render time.
+        if (displayName != null && displayName.startsWith(ItemBuilder.MINIMESSAGE_PREFIX)) {
             return null;
         }
         List<String> lore = new ArrayList<>();
         ItemLore itemLore = item.getData(DataComponentTypes.LORE);
         if (itemLore != null) {
             for (Component line : itemLore.lines()) {
-                String text = legacy.serialize(line);
-                if (text.startsWith(MINIMESSAGE_PREFIX)) {
+                String text = builder.toReadableText(line);
+                if (text.startsWith(ItemBuilder.MINIMESSAGE_PREFIX)) {
                     return null;
                 }
                 lore.add(text);
@@ -125,21 +123,5 @@ public final class ItemSerializer {
         }
         boolean glow = Boolean.TRUE.equals(item.getData(DataComponentTypes.ENCHANTMENT_GLINT_OVERRIDE));
         return new ItemTemplate.Descriptive(item.getType(), displayName, item.getAmount(), lore, glow);
-    }
-
-    /** The stack a readable template stands for, before any per-viewer substitution. */
-    private ItemStack toItemStack(ItemTemplate.Descriptive template) {
-        ItemStack stack = ItemStack.of(template.material(), template.amount());
-        if (template.displayName() != null) {
-            stack.setData(DataComponentTypes.CUSTOM_NAME, legacy.deserialize(template.displayName()));
-        }
-        if (!template.lore().isEmpty()) {
-            stack.setData(DataComponentTypes.LORE,
-                    ItemLore.lore(template.lore().stream().map(legacy::deserialize).toList()));
-        }
-        if (template.glow()) {
-            stack.setData(DataComponentTypes.ENCHANTMENT_GLINT_OVERRIDE, true);
-        }
-        return stack;
     }
 }

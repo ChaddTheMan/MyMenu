@@ -95,8 +95,9 @@ public sealed interface ItemTemplate permits ItemTemplate.Descriptive, ItemTempl
     }
 
     /**
-     * An item in Paper's byte-array form. The bytes are produced and consumed only by
-     * {@link me.chaddtheman.mymenu.storage.ItemSerializer}; the model never interprets them.
+     * An item in Paper's byte-array form. The bytes are produced by
+     * {@link me.chaddtheman.mymenu.storage.ItemSerializer} and read back by
+     * {@link me.chaddtheman.mymenu.render.ItemBuilder}; the model never interprets them.
      *
      * <p>Arrays are mutable and records compare them by reference, so this record copies on the
      * way in and out and overrides equality. Without that, a caller could alter a stored item

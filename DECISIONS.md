@@ -803,6 +803,76 @@ failure. If the fault is permanent (disk full, permissions, a stray file at the 
 admin can neither write nor reload, and loses the changes at shutdown anyway. The lock needs a
 deliberate way out. SPEC §12.
 
+### 72. Displayed text is parsed first, then tokens are replaced inside the component
+**Old:** 1.x applied wildcards to command strings only, then translated `&` codes over the
+result, so colour codes in a substituted value took effect.
+**New:** For displayed text (names, lore, titles, messages) the order is **parse, then
+replace**. The admin-authored string is parsed into a `Component` first (`&`, `&#hex`, or
+MiniMessage after `<!mm>`), with wildcard and placeholder tokens still literal text. The tokens
+are then replaced inside that component with literal text values through Adventure's component
+text replacement, so a substituted value becomes a text node and never passes through a parser.
+Command values are separate: plain string substitution, then sanitisation, and no parsing at
+all.
+**Why:** SPEC §10 and ARCHITECTURE §4 step 3 and §10 originally gave the order as "wildcards →
+PlaceholderAPI → colour translation". That puts parsing last, so it parses whatever was
+substituted. It contradicted hard rule 11 and SPEC §10.1, and it was exploitable: a nickname
+containing `&c&l`, or placeholder output containing a MiniMessage tag, would inject formatting
+into text an admin wrote. The documents were corrected after stage 3 (commit `b62554e`). This
+is a change of behaviour, not of wording. It also fixes the shape of the stage 4 text seam:
+the renderer parses now and hands stage 9 a `Component` to replace tokens in, never a raw
+string. The cost is that a token split across differently styled runs (`{PLA&cYER}`) is not
+recognised, since replacement works node by node. Nobody writes that on purpose.
+
+### 73. Capture and render share one build path; default-italic names now go to bytes
+**Old:** n/a.
+**New:** `render/ItemBuilder` owns template → `ItemStack` for both shapes, including reading
+the bytes back. `ItemSerializer` keeps item → template (`capture`, `serialize`), and its
+`deserialize` is gone. `capture` checks its round trip with `ItemBuilder.build`, the method the
+renderer calls. So `storage` depends on `render`, not the other way round.
+**Why:** #66's round trip means "stored readably only if it renders as this exact item". That
+holds only if the round trip uses the renderer's conversion. A second copy would drift, and
+#70's italic rule is exactly the kind of difference that would drift unnoticed.
+
+The consequence reverses part of #66's verified list. A name that is italic only by
+Minecraft's default, which is what an anvil rename produces, no longer round-trips: readable
+text renders with italic off, so the rebuilt stack differs and the item goes to bytes. Explicit
+`italic: false` names now come out readable. Explicit `italic: true` comes out readable as
+`&o…`. Verified at runtime on 26.2.
+
+Rejected: treating "italic unset" as `&o` and comparing visually rather than structurally.
+The stored item would render with explicit italic, which looks identical but is not
+`isSimilar` to the original, so an anvil-named item bound with `EXACT` would stop matching
+the item the admin captured it from.
+
+### 74. An unreadable stored item renders as a barrier, not an empty slot
+**Old:** n/a (1.x stored material names).
+**New:** When an opaque item's bytes fail to deserialise, or deserialise to nothing, its slot
+shows a barrier named "Unreadable item". The rest of the menu renders normally. This applies to
+a hidden fallback as well as to the icon. A warning naming menu, slot and cause is logged once
+per stored item per renderer, not on every open. In edit mode the barrier's lore names the slot
+and the cause, and says the data is kept. If a gated item's fallback is unreadable, the
+permission marker says so, even though edit mode does not show fallbacks. The bytes are
+untouched in storage, so the item comes back once whatever it depends on is back.
+**Why:** #67 does not validate blobs at load, because a blob can fail only temporarily, for
+example when a datapack enchantment has not loaded yet. An empty slot would hide the fault from
+the admin. In view mode it would also look like "nothing here" over a slot that still has
+actions. A barrier is visibly wrong without taking the menu down. **Open for stage 6:** whether
+clicking a barrier runs the slot's actions. As built, the model still has them, and nothing in
+rendering prevents it. **Open for stage 8:** the property editor cannot edit metadata it cannot
+deserialise and must refuse that clearly.
+
+### 75. `render` takes the revision and mode; the token seam is per viewer
+**Old:** n/a.
+**New:** `MenuRenderer.render(Menu, long revision, Player, ViewMode)`, not ARCHITECTURE §4's
+`render(Menu, Player)`. The caller reads the menu and its revision from the registry in the
+same main-thread tick. The renderer is constructed with a `Function<Player, TokenReplacer>`,
+which is `viewer -> TokenReplacer.NONE` until stage 9.
+**Why:** The holder needs the revision (§4.1, §4.3), and passing it in keeps the renderer free
+of the registry. The alternatives were to reach into `MenuService` or to add a combined lookup
+to the registry, and neither has another user yet. `TokenReplacer` takes and returns a
+`Component`, so stage 9 cannot re-parse a substituted value without changing the interface
+(#72).
+
 ---
 
 ## Template for new entries

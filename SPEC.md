@@ -423,6 +423,19 @@ All clicks and drags inside a menu are cancelled, in both view and edit mode. It
 never removed from a menu by a player. Edit mode interprets the cancelled click as an
 editing operation rather than ignoring it; see §11.
 
+### 8.4.0 Items that cannot be loaded
+
+A stored item whose serialized form fails to deserialise renders as a named barrier, in both
+view and edit mode. The slot is never left empty and the failure never aborts the menu. The
+stored data is kept untouched, so an item that failed because a datapack was absent returns
+intact once it loads.
+
+**Clicking the barrier still runs the slot's actions**, because the actions are intact in the
+model and a display failure must not disable a working button.
+
+The server log names the menu, slot and cause once per stored item. Edit mode repeats the cause
+in the barrier's lore, so an admin can find the broken slot without reading the log.
+
 ### 8.4.1 Shrinking a menu
 
 Changing a menu's type or row count so that occupied slots would fall outside the new
@@ -551,7 +564,8 @@ a nicety.
 `&` codes everywhere, including hex `&#RRGGBB`. MiniMessage is available on any
 admin-authored string prefixed `<!mm>`.
 
-**Readable text renders with italic explicitly disabled** unless the text sets it. Minecraft
+**Readable text renders with italic explicitly disabled** unless the text sets it. This
+applies to item names and lore, not to menu titles, which are not italic by default. Minecraft
 italicises custom item names by default, which is almost never what an admin wants, and
 practically every modern plugin turns it off. The item-capture check (§6) builds its readable
 candidate the same way, so that an item carrying `italic: false` still round-trips to the

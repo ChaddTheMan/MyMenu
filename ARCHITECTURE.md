@@ -53,7 +53,8 @@ me.chaddtheman.mymenu
 ├── model/                       Menu, MenuItem, ItemTemplate, MenuType, MatchMode
 ├── service/                     MenuService, MenuRegistry, CooldownStore
 ├── action/                      Action, ActionType, ActionParser, ActionExecutor
-├── render/                      MenuRenderer, MenuHolder, ItemBuilder
+├── render/                      MenuRenderer, MenuHolder, ViewMode, ItemBuilder,
+│                                TokenReplacer (the stage 9 seam)
 ├── session/                     ViewSession, EditSession, SessionManager, NavigationStack
 ├── storage/                     MenuStorage, YamlMenuStorage, MySqlMenuStorage,
 │                                ItemSerializer, BackupWriter
@@ -163,7 +164,11 @@ Models are immutable; see §3.1.
 
 ## 4. Rendering
 
-`MenuRenderer.render(Menu, Player)` returns a fresh `Inventory`:
+`MenuRenderer.render(Menu, long revision, Player, ViewMode)` returns a fresh `Inventory`. The
+revision is passed in rather than read, because the renderer has no registry — it is pure with
+respect to the model (§4, last paragraph).
+
+The steps:
 
 1. Create it with a `MenuHolder` carrying the **menu name**, the current global revision,
    and the **view mode** (`VIEW` or `EDIT`).
@@ -174,8 +179,26 @@ Models are immutable; see §3.1.
 3. Build the `ItemStack`: **parse** the admin-authored text into a component first, then
    **replace** the wildcard and placeholder tokens inside it with literal values, per viewer
    (§10). Never the other way round.
-4. Apply the glint override if `glow` is set.
-5. Stamp the **rendered-icon** persistent-data key on every item.
+4. Apply the glint override if `glow` is set. This works on both template shapes; a `false`
+   override already inside opaque bytes is left alone.
+5. Stamp the **rendered-icon** persistent-data key (`mymenu:rendered_icon`) on every item
+   placed, barriers and fallbacks included.
+
+**An opaque blob that fails to deserialise renders as a named barrier**, in both modes, never
+as an empty slot and never as a thrown error. An empty slot hides the fault; a thrown error
+takes the whole menu down, which is the 1.x failure again. The blob itself is never touched, so
+an item that failed because a datapack was missing returns intact once it loads. A stored item
+that deserialises to empty counts as unreadable. The failure is logged once per stored item
+naming the menu, slot and cause, and `EDIT` mode repeats the cause in the barrier's lore.
+
+**Clicking a barrier still runs the slot's actions.** The icon is decoration; the actions are
+the function and are intact in the model. A corrupt texture must not disable a working button.
+
+`ItemBuilder` parses admin text into a `Component` **before** any token replacement, then calls
+`TokenReplacer.replace(Component)`. The seam takes and returns a component, so an implementation
+has no string to re-parse and §10's parse-then-replace order is enforced by the type rather than
+by discipline. Stage 9 supplies the implementation; until then `TokenReplacer.NONE` is the
+identity and tokens render literally.
 
 Rendering is pure with respect to the model: it reads and never writes.
 
@@ -399,7 +422,12 @@ flush, which was true only while every mutation wrote immediately.
 
 ### 7.5 Item serialisation
 
-`ItemSerializer` uses Paper's byte-array serialisation, which runs through the game's own
+`ItemSerializer` handles capture and the bytes-out direction; **deserialisation lives in
+`ItemBuilder`**, since turning a template into an `ItemStack` is rendering work. `capture`
+rebuilds its readable candidate through the same `ItemBuilder.build` the renderer uses, so the
+two cannot drift — which is what keeps the italic rule (§10) consistent across both halves.
+
+Paper's byte-array serialisation runs through the game's own
 data converters and survives version upgrades. Hand-rolled NBT and
 `ConfigurationSerializable` round-trips both lose data on modern items.
 

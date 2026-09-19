@@ -52,6 +52,9 @@ plugin that happens to share a name.
 - Edits are saved a couple of seconds after you make them, so a burst of changes is written once
 - Items with special data such as enchantments or custom heads are stored in an encoded form;
   plain items stay readable in the menu file
+- Item names and lore are no longer shown in italics unless the text asks for it
+- An item that can no longer be loaded shows as a barrier instead of breaking the menu, and the
+  server log names the menu and slot
 - Menu items are placed by dragging a real item into the slot, rather than typing a
   material name
 - Statistics now use bStats; the old MCStats service no longer exists

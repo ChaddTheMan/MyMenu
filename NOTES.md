@@ -1,67 +1,58 @@
 # NOTES — session state (overwritten each session)
 
 ## Current stage
-Stage 3 is committed (`7fea4e2`). Stage 4 (`MenuHolder`, `MenuRenderer`, `ItemBuilder`, and the
-`ItemSerializer.capture` change) has **not started**. It waits for the user's go-ahead.
-SPEC.md and ARCHITECTURE.md were revised after stage 3 and were re-read in full on 2026-09-18.
+Stage 4 (`render/`: `MenuHolder`, `MenuRenderer`, `ItemBuilder`, `ViewMode`, `TokenReplacer`,
+plus the `ItemSerializer.capture` change) is **written and verified but not committed**. It waits
+for the user's review. Stage 5 has not started. Full report: `STAGE4-REPORT.md`.
 
-## Verified working (2026-09-18, Paper 26.2-124, Java 25, Gradle 9.7.1)
-- Everything listed for stage 3 in commit `7fea4e2` and DECISIONS #66–#68: capture chooses the
-  form, serialized items round-trip, debouncing coalesces, the shutdown flush writes, the backup
-  policy holds, a malformed file degrades without being touched, and a failed write leaves the
-  live file intact.
-- No code has changed since that commit.
+## Verified working (2026-09-19, Paper 26.2-124, Java 25, Adventure 5.2.0)
+- `./gradlew clean build` is clean. `runServer` starts and stops cleanly with a `menus.yml` of
+  four menus (`run/` holds a `probe` menu with a real serialized item and two corrupt ones).
+- A temporary probe (now deleted) passed 45 checks with proxy `Player`s, no game client:
+  - holder fields;
+  - VIEW hiding, fallback and no compaction;
+  - EDIT markers, with and without existing lore;
+  - glow on both shapes;
+  - the italic rule, including `&o` still winning;
+  - the rendered-icon key on every item;
+  - model and revision unchanged by rendering;
+  - hopper sizing;
+  - a hostile token value staying literal text;
+  - capture round trips;
+  - MiniMessage;
+  - corrupt blobs (garbage and truncated) as barriers with the rest of the menu intact;
+  - `menus.yml` byte-identical afterwards.
+- **Not verified by eye.** Nobody has seen a rendered menu in a real client yet. Glint, italics
+  and lore layout were checked as data components, not visually. The first chance is stage 5,
+  when menus can open.
 
 ## Known broken / open
 - Nothing known broken. There are still no automated tests (SPEC §15.4).
-- **Stage 4, italic (DECISIONS #70, SPEC §10.2).** No longer an open stage 9 question. Both
-  halves land in stage 4:
-  - the render half: readable text renders with italic explicitly disabled unless the text
-    sets it;
-  - the capture half: `ItemSerializer.capture` builds its readable candidate the same way.
-  If only the render half lands, items carrying `italic: false` keep going to bytes and nothing
-  visibly breaks. Stage 9's `TextService` inherits this rule; it must not redefine it.
-- **Stage 4, blobs.** The renderer must handle an opaque blob that fails to deserialise. Blobs
-  are not validated at load (DECISIONS #67).
-- **Stage 6, actions.** `ActionCodec.NONE` makes any stored action a load error, which degrades
-  storage. `ActionParser` must implement `ActionCodec`. Its `write` must return a fresh map each
-  call, or SnakeYAML emits `&id001` aliases (see `MenuYamlFormat.dump`).
-- **Stage 7, reload.**
-  - Reload must flush first.
-  - It must refuse if `loadAll()` fails with "changes that could not be written".
-  - It must also call `setBackupPolicy` / `setDebounce` with the re-read config.
-  - Storage's `flush()` blocks and is for `onDisable` only, so reload needs a non-blocking
-    flush.
-  - **The discard form (DECISIONS #71, SPEC §12):** `/mymenu reload` needs an explicit form that
-    drops unwritten changes and re-reads from disk, and the ordinary refusal must name it.
-    `YamlMenuStorage` has no way to do that yet. Today `loadAll()` refuses while the image is
-    flagged unwritten, and nothing clears the flag except a successful write. Stage 7 must add
-    an explicit discard to `MenuStorage`, for example `discardUnwritten()` or a
-    `loadAll(boolean discard)`. It must also cancel `DebouncedMenuWriter`'s pending batch, or
-    the discarded changes come back on the next timer.
-- **Stage 9:** `TextService` must follow #70's italic rule, which is already decided (see
-  above).
-- **Stage 10:** the write-failure notice to admins is a hard-coded string (TODO in
-  `DebouncedMenuWriter`).
-- **Stage 11:** MySQL always stores bytes, so it needs a readable-to-`ItemStack` conversion. The
-  one in `ItemSerializer` is private and does no wildcard handling. Stage 4's `ItemBuilder` may
-  make this easier.
-- Carried over: map Bukkit's keyless clicks onto `ClickKey` (stage 6; ARCHITECTURE §3 now gives
-  the mapping). Verify `InventoryCloseEvent.getReason()` / `Reason.OPEN_NEW` (stage 5). Consider
-  excluding `protobuf-java` from the MySQL driver (stage 11).
+- **Stage 5:** `MenuRenderer` is not wired into `MyMenu` yet; construct one renderer per plugin
+  instance (its log-once set is per instance). Read the menu and its revision in the same tick.
+  Verify `InventoryCloseEvent.getReason()` / `Reason.OPEN_NEW`.
+- **Stage 6:** decide whether clicking an unreadable-item barrier runs the slot's actions
+  (DECISIONS #74). Clicking a hidden slot must also be refused: the click handler must re-check
+  the view permission rather than trust that an empty slot has no model item. Map Bukkit's keyless
+  clicks onto `ClickKey`. `ActionCodec.NONE` makes any stored action a load error; `ActionParser`
+  must implement `ActionCodec`, with `write` returning a fresh map each call.
+- **Stage 7, reload:** flush first; refuse on unwritten changes; re-apply
+  `setBackupPolicy`/`setDebounce`; needs a non-blocking flush; add the discard form (#71): an
+  explicit discard on `MenuStorage` that also cancels `DebouncedMenuWriter`'s pending batch.
+- **Stage 8:** the property editor must refuse to edit an opaque item that does not deserialise
+  (#74).
+- **Stage 9:** implement `TokenReplacer` per viewer with `Component#replaceText` (#72, #75);
+  replace `viewer -> TokenReplacer.NONE`. Command values take a separate string path with
+  sanitisation. `ItemBuilder` already owns the italic rule (#70), so `TextService` must reuse it
+  rather than redefine it.
+- **Stage 10:** hard-coded English in `MenuRenderer` (marker, barrier) and in
+  `DebouncedMenuWriter` (write-failure notice) moves to `messages.yml`.
+- **Stage 11:** readable → `ItemStack` for MySQL is now `ItemBuilder.build(descriptive,
+  TokenReplacer.NONE)`. Consider excluding `protobuf-java` from the MySQL driver.
 
 ## Needs the user's input
-- A go-ahead for stage 4.
-- Three document inconsistencies found in the re-read, all left unedited:
-  1. ARCHITECTURE §7 has a stray code fence at line 334, after the "Since models are
-     immutable…" paragraph. It opens a code block that swallows the `YamlMenuStorage` and
-     `MySqlMenuStorage` paragraphs when the file is rendered.
-  2. ARCHITECTURE §8's "Resolved at stage 2" says "immutable models plus a **concurrent map**".
-     §3.1 and DECISIONS #61 say a copy-on-write snapshot behind a `volatile` field, and §3.1
-     explicitly argues against `ConcurrentHashMap`.
-  3. The substitution order conflicts with itself. SPEC §10 and ARCHITECTURE §4 step 3 / §10
-     say "wildcards → PlaceholderAPI → colour translation". SPEC §10.1 and hard rule 11 say
-     substitution happens *after* parsing. Taken literally, the first order parses substituted
-     values as `&` codes. Hard rule 11 should win: parse the admin text first, then insert
-     substituted values as plain-text data. This is stage 9's problem, but it shapes the text
-     seam stage 4 leaves (see the confirmation message).
+- Review and commit stage 4.
+- ARCHITECTURE §4 still says `render(Menu, Player)`, and §7.5 still implies `ItemSerializer`
+  deserialises. The code differs, as DECISIONS #73 and #75 record. The documents were not edited.
+- Behaviour change to accept or reject (DECISIONS #73): anvil-renamed items now capture as
+  bytes rather than readable.
