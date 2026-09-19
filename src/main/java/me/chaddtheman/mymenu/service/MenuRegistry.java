@@ -18,7 +18,7 @@
 package me.chaddtheman.mymenu.service;
 
 import me.chaddtheman.mymenu.model.Menu;
-import me.chaddtheman.mymenu.render.VersionedMenu;
+import me.chaddtheman.mymenu.model.VersionedMenu;
 
 import java.util.Collection;
 import java.util.Collections;

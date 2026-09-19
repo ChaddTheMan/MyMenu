@@ -889,6 +889,9 @@ package both sides already depend on. Removing `revision(name)` closes the only 
 assemble a mismatched pair; it had no caller. Move the record to `model/` when that package is next
 open; nothing else needs to change.
 
+**Correction (2026-09-19, later the same session):** moved to `model/` as ARCHITECTURE §4 intends;
+the importers changed and nothing else did.
+
 ### 77. The swap-in-flight marker is cleared by a scheduled task, not compared to a tick number
 **Old:** n/a.
 **New:** `markSwap` raises a flag and queues a delay-0 task that lowers it. Validity honours the

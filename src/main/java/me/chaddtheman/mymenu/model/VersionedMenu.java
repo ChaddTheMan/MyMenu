@@ -15,9 +15,7 @@
  * You should have received a copy of the GNU General Public License
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
-package me.chaddtheman.mymenu.render;
-
-import me.chaddtheman.mymenu.model.Menu;
+package me.chaddtheman.mymenu.model;
 
 import java.util.Objects;
 
@@ -28,6 +26,10 @@ import java.util.Objects;
  * against to learn that its menu changed or vanished, so a revision taken from one lookup and a
  * menu from another would let a stale view pass the check. Making the pair a type means the
  * registry hands out both from one snapshot and nothing downstream can separate them.
+ *
+ * <p>The revision is registry state, not menu data: it is never persisted, and the storage layer
+ * must never try to serialise it. Two equal menus loaded at different times get different
+ * revisions on purpose.
  */
 public record VersionedMenu(Menu menu, long revision) {
 

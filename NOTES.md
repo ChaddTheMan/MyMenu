@@ -1,7 +1,7 @@
 # NOTES — session state (overwritten each session)
 
 ## Current stage
-Stage 5 (`session/`, `listener/`, `render/VersionedMenu`, `MenuRegistry.lookup`, wiring in
+Stage 5 (`session/`, `listener/`, `model/VersionedMenu`, `MenuRegistry.lookup`, wiring in
 `MyMenu`) is **written and verified but not committed**. It waits for the user's review. Stage 4 is
 also still uncommitted. Stage 6 has not started. Full report: `STAGE5-REPORT.md`.
 
@@ -40,8 +40,7 @@ also still uncommitted. Stage 6 has not started. Full report: `STAGE5-REPORT.md`
   read this stage. Add the gate where the command layer adds its own. `give` must stamp
   `PlayerInteractListener.boundItemKey()` (`mymenu:bound_item`, STRING = menu name). Reload:
   flush first; refuse on unwritten changes; re-apply `setBackupPolicy`/`setDebounce`; add the
-  discard form (#71). `VersionedMenu` sits in `render/`; move it to `model/` when `model/` is next
-  open (#76).
+  discard form (#71).
 - **Stage 8:** `EditSession.PendingPrompt` carries only its timeout task; add what the prompt is
   for. Set it *before* closing the inventory, and clear it on resolve. Edit clicks are cancelled and
   otherwise ignored in `InventoryClickListener`. The property editor must refuse an opaque item that

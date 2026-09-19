@@ -173,6 +173,11 @@ signature took the menu and its revision as two arguments, which let a caller pa
 pair; the pairing is a correctness invariant, so it is a type rather than a convention. Cheap
 before the first caller, awkward after the third.
 
+It lives in `model/` for dependency reasons rather than taxonomic ones: `service/` produces it
+and `render/` consumes it, so either of those placements would add an edge between the two,
+while everything already depends on `model/`. The revision is registry state and is never
+persisted (§3), which its javadoc should say so that nobody tries to serialize it.
+
 The steps:
 
 1. Create it with a `MenuHolder` carrying the **menu name**, the current global revision,

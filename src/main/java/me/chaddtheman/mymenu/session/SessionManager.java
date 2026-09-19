@@ -17,9 +17,9 @@
  */
 package me.chaddtheman.mymenu.session;
 
+import me.chaddtheman.mymenu.model.VersionedMenu;
 import me.chaddtheman.mymenu.render.MenuHolder;
 import me.chaddtheman.mymenu.render.MenuRenderer;
-import me.chaddtheman.mymenu.render.VersionedMenu;
 import me.chaddtheman.mymenu.render.ViewMode;
 import me.chaddtheman.mymenu.service.MenuRegistry;
 import org.bukkit.Bukkit;

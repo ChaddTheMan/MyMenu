@@ -22,6 +22,7 @@ import io.papermc.paper.datacomponent.item.ItemLore;
 import me.chaddtheman.mymenu.model.ItemTemplate;
 import me.chaddtheman.mymenu.model.Menu;
 import me.chaddtheman.mymenu.model.MenuItem;
+import me.chaddtheman.mymenu.model.VersionedMenu;
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.format.NamedTextColor;
 import net.kyori.adventure.text.format.TextDecoration;

@@ -180,6 +180,10 @@ false, so ops experience cooldowns while testing them.
 **No permission is required to open a menu with a bound item.** Carried over from 1.x:
 it is how ordinary players use the plugin.
 
+Because both the command path and the bound-item path go through the same session-opening
+call, **the permission gate belongs in the command layer, not in the session manager.** Putting
+it in the shared call would gate bound-item opens too and lock every player out of every menu.
+
 Per-item view permissions (§8.3) use arbitrary admin-chosen nodes and are not part of
 this tree.
 
