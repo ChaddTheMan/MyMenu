@@ -16,8 +16,23 @@ internal class names, no package paths, no implementation detail.
 
 - Menu items can run commands, send messages, open other menus, go back, close, and pause
   between steps.
+- The full `/mymenu` command set, aliased `/mm`, with tab completion, typed arguments and a
+  help page that only lists the commands you are allowed to use.
+- `/mymenu joinmenu <menu|none>` chooses the menu that opens on join, so `config.yml` never
+  has to be edited by hand.
+- `/mymenu changelog [version]` shows what changed, straight from the plugin.
+- `/mymenu reload discard-unsaved` throws away changes that cannot be saved, for when the
+  cause cannot be fixed and an ordinary reload would refuse.
+- Two new settings: how many menus deep one menu may open another, and the longest a click's
+  delays may add up to.
+- Menus cannot be named `none`, because the join menu command uses that word to mean "no menu".
 
 ### Changed
+
+- `/mymenu reload` now saves pending changes first, re-reads `config.yml` as well as the
+  menus, closes open menus, and refuses rather than lose changes it could not save.
+- Deleting a menu now closes it for anyone looking at it, ends editing sessions on it, and
+  warns if it was the join menu.
 
 ### Fixed
 

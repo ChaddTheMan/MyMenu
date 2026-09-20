@@ -84,7 +84,9 @@ import java.util.concurrent.TimeoutException;
  * degraded, which makes {@code MenuService} refuse further edits, and remembers that its image
  * holds changes the file does not. {@link #flush} retries that write once, so shutdown still
  * tries to save the work, and {@link #loadAll} refuses to run over it, because re-reading the
- * file would silently throw those changes away.
+ * file would silently throw those changes away. Reload retries the write through
+ * {@link #retryUnwritten} before loading, so fixing the fault and reloading keeps the work; when
+ * the fault is permanent, {@link #discardUnwritten} is the admin's explicit way out.
  *
  * <p>A backup failure counts as a write failure. Replacing the live file without the backup the
  * admin was promised would quietly remove the safety net, and a disk that cannot take the backup
@@ -158,7 +160,7 @@ public final class YamlMenuStorage implements MenuStorage {
 
     private Raw readFile() {
         if (imageUnwritten) {
-            throw new IllegalStateException(
+            throw new UnwrittenChangesException(
                     "menus.yml has changes that could not be written; refusing to re-read over them");
         }
         String text;
@@ -227,6 +229,30 @@ public final class YamlMenuStorage implements MenuStorage {
             image.remove(menu.name());
             imageUnwritten = true;
             writeImage(false);
+        }, io);
+    }
+
+    @Override
+    public CompletableFuture<Void> retryUnwritten() {
+        return CompletableFuture.runAsync(() -> {
+            if (imageUnwritten) {
+                logger.warn("Retrying the failed write of menus.yml");
+                writeImage(false);
+            }
+        }, io);
+    }
+
+    @Override
+    public CompletableFuture<Boolean> discardUnwritten() {
+        return CompletableFuture.supplyAsync(() -> {
+            boolean had = imageUnwritten;
+            if (had) {
+                // The image itself is left alone: the load that follows replaces it wholesale.
+                logger.warn("Discarding menu changes that could not be written, on an admin's request. "
+                        + "menus.yml keeps its last good save.");
+                imageUnwritten = false;
+            }
+            return had;
         }, io);
     }
 

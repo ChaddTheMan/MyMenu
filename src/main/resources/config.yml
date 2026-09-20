@@ -1,6 +1,8 @@
 # MyMenu configuration
 configVersion: 1
 
+joinMenu: ''              # set with /mymenu joinmenu <menu|none>; empty means none
+
 storage:
   # After the first change in a burst of edits, wait this long, then save them all at once.
   writeDebounceMillis: 2000
@@ -8,3 +10,9 @@ storage:
 backups:
   keep: 10                # save backups kept in backups/; deleted-menu backups are never removed
   minIntervalSeconds: 300 # at most one save backup per this many seconds
+
+navigation:
+  maxDepth: 10            # how many menus deep one menu can open another (1 to 32)
+
+actions:
+  maxTotalDelaySeconds: 30 # the longest one click's delays may add up to

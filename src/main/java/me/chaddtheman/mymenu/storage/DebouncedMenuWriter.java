@@ -31,6 +31,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executor;
 
 /**
@@ -112,12 +113,40 @@ public final class DebouncedMenuWriter implements MenuPersistence {
      * everything submitted. {@code onDisable} only.
      */
     public void flush() {
+        cancelTimer();
+        submit();
+        storage.flush();
+    }
+
+    /**
+     * Writes the pending batch now without waiting for it: for {@code /mymenu save} and reload,
+     * which must not block the main thread. Completes, on storage's thread, once every write it
+     * submitted has finished, with the number of menus those writes covered; exceptionally if
+     * any of them failed.
+     */
+    public CompletableFuture<Integer> flushAsync() {
+        cancelTimer();
+        int count = pendingSaves.size() + pendingDeletes.size();
+        return submit().thenApply(ignored -> count);
+    }
+
+    /**
+     * Drops the pending batch without writing it. Only the reload discard form calls this; left
+     * in place, a dropped change would come back when the timer fired.
+     */
+    public int discardPending() {
+        cancelTimer();
+        int count = pendingSaves.size() + pendingDeletes.size();
+        pendingSaves.clear();
+        pendingDeletes.clear();
+        return count;
+    }
+
+    private void cancelTimer() {
         if (timer != null) {
             timer.cancel();
             timer = null;
         }
-        submit();
-        storage.flush();
     }
 
     private void startTimer() {
@@ -129,16 +158,18 @@ public final class DebouncedMenuWriter implements MenuPersistence {
         }
     }
 
-    private void submit() {
+    private CompletableFuture<Void> submit() {
+        List<CompletableFuture<Void>> writes = new ArrayList<>();
         for (Menu menu : pendingDeletes) {
-            storage.delete(menu).whenComplete((ignored, failure) -> reportFailure(failure));
+            writes.add(storage.delete(menu).whenComplete((ignored, failure) -> reportFailure(failure)));
         }
         pendingDeletes.clear();
         if (!pendingSaves.isEmpty()) {
-            storage.saveAll(List.copyOf(pendingSaves.values()))
-                    .whenComplete((ignored, failure) -> reportFailure(failure));
+            writes.add(storage.saveAll(List.copyOf(pendingSaves.values()))
+                    .whenComplete((ignored, failure) -> reportFailure(failure)));
             pendingSaves.clear();
         }
+        return CompletableFuture.allOf(writes.toArray(CompletableFuture[]::new));
     }
 
     // Runs on storage's thread; storage has already logged the cause in full.

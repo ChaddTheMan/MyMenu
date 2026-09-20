@@ -1021,6 +1021,109 @@ feedback plus a penalty contradicts that, as well as differing from a slot with 
 A sequence ends as soon as nothing executable remains, so a trailing `DELAY` does not hold the
 player pending with nothing to run. The throw-stops-the-list rule stands.
 
+### 87. Reload retries a failed write before it loads
+**Old:** n/a.
+**New:** `/mymenu reload` flushes the pending batch, then asks storage to write again anything an
+earlier write failed to persist, and only then loads. Both forms of reload do this; the discard
+form discards only what that retry could not write.
+**Why:** #68 makes `loadAll()` refuse while the image holds unwritten changes, and nothing cleared
+that flag except a successful write — but no path attempted one after the failure, short of
+shutdown. An admin who fixed the fault (freed the disk, removed the stray file) therefore still
+could not reload, and the only way forward was #71's discard form, which would have thrown away
+changes that had just become writable. With the retry, a fixed fault costs nothing: the work is
+written and the reload proceeds. Observed in testing: the stray-file simulation cleared itself
+when the failed write's own temp-file cleanup removed the obstruction, and the retry then saved
+the change that would otherwise have been discarded.
+
+### 88. Mutating commands are refused at the command edge, not only by `MenuService`
+**Old:** 1.x had no degraded state and no reload gate.
+**New:** `CommandSpec.mutating()` marks the commands SPEC §12 lists as refusable, and the tree
+refuses them before the subcommand runs when storage is degraded, when menus have not loaded, or
+while a reload is in flight.
+**Why:** Two of them never reach `MenuService`: `joinmenu` writes `config.yml`, and `edit` only
+opens a view. Hard rule 10 still stands — `MenuService` keeps its own check, and it is what
+protects the model — but the edge check is what makes the whole SPEC §12 list behave alike and
+explain itself in the same words. The reload condition is new: between the flush and the
+`replaceAll`, an accepted edit would be made against menus the load is about to replace. Nothing
+but commands can mutate today, so the edge covers every path. **Stage 8 must not bypass it:** an
+editor click is a mutation, and it needs the same three checks.
+
+### 89. Commands never open or close an inventory in the tick they run
+**Old:** 1.x opened inventories straight from its command handlers.
+**New:** `open`, `edit`, the delete cascade and reload all schedule their inventory work for the
+next tick.
+**Why:** A menu item can run `/mymenu open shop` as a player command, and action lists execute
+inside `InventoryClickEvent`, where rule 9 forbids opening or closing an inventory. A command
+cannot tell whether it was typed or clicked, so it always defers. The cost is one tick of delay
+and a result message that arrives after the command returns; in the gap, a click on a menu that
+is about to be deleted already fails the stale-view check.
+
+### 90. `update` is registered and says it cannot check yet
+**Old:** 1.x had an update checker that downloaded and replaced the jar, and documented a
+`/mmupdate` command that did not exist.
+**New:** `/mymenu update` exists from stage 7 and replies that this build cannot check for
+updates. The checker itself is stage 10.
+**Why:** SPEC §3.7 gives it a behaviour the plugin cannot have until `integration/` exists, and
+the alternative — leaving it out of the tree — would have made the generated help and the
+permission set change shape again at stage 10. A command that states its own limit is not the
+same failure as 1.x's help documenting a command that never existed. **It must be finished at
+stage 10**; if the checker slips, this command goes rather than lingers.
+
+### 91. `joinMenu` and `storage.type` are read before the features that consume them exist
+**Old:** 1.x had `OpenOnJoin` per menu and no storage choice.
+**New:** `PluginConfig` reads `joinMenu` and `storage.type` at stage 7. `joinMenu` appears in the
+bundled default file; `storage.type` does not.
+**Why:** SPEC §5.1 says a key is added in the stage that reads it, because shipping unread keys
+implies settings that do nothing. Both are read here, just not by the feature they name:
+`joinmenu` writes `joinMenu` and `delete` warns when it names the menu being deleted, while
+`storage.type` is compared across a reload so the refusal to switch backends at runtime can be
+reported. Nothing opens a menu on join yet (SPEC §13 has no stage), so `joinMenu` is a setting an
+admin can set and not yet see act; that is the lesser evil against `joinmenu` writing a key the
+file never mentions. `storage.type` stays out of the default file because offering `MYSQL` there
+would advertise a backend stage 11 has not built; a file that names it is honoured with a warning
+and YAML.
+
+### 92. The delete cascade does not cancel pending `MENU` actions
+**Old:** n/a.
+**New:** Deleting a menu closes its views, ends its edit sessions and prompts, purges it from
+navigation stacks, and warns about `joinMenu` — but does not cancel action sequences that are
+waiting on a delay and will open it. When such an action fires, the menu is gone, and the player
+is told it does not exist.
+**Why:** SPEC §3.5 asks for the cancellation. `ActionExecutor` exposes `cancel(UUID)` and nothing
+that reports what a pending sequence still holds, so doing it properly needs a method in
+`action/`, which stage 7 was scoped out of. The fallback is not dangerous: the executor already
+handles a missing menu. Left undone deliberately, and the stage 7 report proposes the method.
+
+**Correction (2026-09-19, review of stage 7):** dropped, not deferred. SPEC §3.5 no longer asks
+for it, and `cancelTargeting` is not to be written. Every other item in the cascade prevents a
+real problem — a stale view of a menu that is gone, an orphaned edit prompt, a `BACK` into a dead
+menu — while this one prevented only a message: the executor already tells the player the menu
+does not exist, and the navigation history is untouched either way. Paying for it would mean
+`ActionExecutor` retaining every pending sequence's remaining steps purely so that something else
+could ask what they contain, which is state kept for a query rather than for the work.
+### 93. `none` is reserved by the command layer only, not by the model
+**Old:** 1.x accepted any name and had no join-menu command.
+**New:** `CommandTree` refuses `none` when validating a new menu name, saying why:
+`/mymenu joinmenu none` uses the word to mean "no menu". `Menu.isValidName` deliberately still
+accepts it, and a hand-written `menus.yml` may legitimately define a menu called `none`. Such a
+menu loads, renders, saves, opens and deletes like any other; the single thing it cannot do is
+be selected by `joinmenu`.
+**Why:** The reservation is a property of one argument of one command, where `none` is a
+sentinel value, not a property of menus. A menu named `none` is perfectly well-formed. Model
+invariants should be the things that make a menu impossible to render or store — a slot outside
+the layout, a material that is not an item — and a name is neither.
+
+Putting the rule in `Menu` instead would also be actively harmful. A model constructor that
+rejected the name would make an existing menu called `none` fail to construct, so the loader
+would skip it and set the degraded state, and **editing would be disabled server-wide over a
+name collision** whose only real effect is that one setting cannot point at that menu. The
+punishment would be wildly out of proportion to the problem.
+
+The command layer is also the only place a person can be told why a name was refused; a
+constructor can only throw. Every name a player can invent arrives through that one validator,
+so the reservation holds everywhere it matters. SPEC §3.2 stated the rule as a property of menu
+names, which was wrong, and is being corrected.
+
 ---
 
 ## Template for new entries

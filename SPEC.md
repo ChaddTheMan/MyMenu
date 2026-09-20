@@ -52,7 +52,7 @@ Subcommands the sender lacks permission for do not appear in suggestions.
 | `/mymenu open <menu>` | `MyMenu.admin.menu.open` | Yes |
 | `/mymenu open <menu> <player>` | `MyMenu.admin.menu.open.other` | No |
 | `/mymenu edit <menu>` | `MyMenu.admin.menu.edit` | Yes |
-| `/mymenu create <menu> [rows] [title...]` | `MyMenu.admin.menu.create` | Yes |
+| `/mymenu create <menu> [rows] [title...]` | `MyMenu.admin.menu.create` | No |
 | `/mymenu delete <menu>` | `MyMenu.admin.menu.delete` | No |
 | `/mymenu set <menu> [matchMode]` | `MyMenu.admin.menu.set` | Yes |
 | `/mymenu unset <menu>` | `MyMenu.admin.menu.unset` | No |
@@ -74,6 +74,11 @@ Subcommands the sender lacks permission for do not appear in suggestions.
   `TYPE_AND_NAME`.
 - **`<player>`** — Paper's player argument type, with online-player suggestions.
 
+`create` works from the console as well as in game. Nothing about creating an empty menu needs
+a player — `author` and `authorUuid` are nullable — and requiring one would stop a server owner
+scripting their initial setup. Where `create` opens the editor afterwards, it does so only for a
+player.
+
 `create` deliberately does **not** take a menu type. Chest is the default and the type is
 changed in the editor, because an optional enum argument sitting before a greedy string
 makes `/mymenu create shop Chest Shop` ambiguous.
@@ -81,7 +86,17 @@ makes `/mymenu create shop Chest Shop` ambiguous.
 ### 3.2 Menu names
 
 Menu names are restricted to `[a-z0-9_-]`, maximum 32 characters, and are lowercased on
-input. This prevents `.` from breaking YAML paths and removes case-collision confusion.
+input.
+
+**`none` is rejected by `/mymenu create`**, because `joinmenu none` uses it to mean "no menu".
+The reservation lives in the **command layer only**, and is deliberately not a model invariant.
+A menu named `none` is perfectly well-formed; it simply cannot be selected as the join menu.
+
+An earlier revision of this section called `none` invalid outright. That was wrong. Enforcing it
+in `Menu`'s constructor would make a hand-written `menus.yml` containing such a menu fail to
+load, which skips the menu and degrades storage — disabling editing server-wide over a name
+collision whose only real effect is that one setting cannot point at it. Model invariants are
+for things that make a menu impossible to render or store, and a name is neither. This prevents `.` from breaking YAML paths and removes case-collision confusion.
 **Titles** are unrestricted: full colour, Unicode, any length the client accepts.
 
 ### 3.3 `set`, `unset`, `give`
@@ -112,8 +127,14 @@ Deleting then cascades. It:
 - closes open views of that menu with a message;
 - ends edit sessions on it and cancels their pending prompts;
 - purges it from every navigation stack;
-- cancels pending `MENU` actions targeting it;
 - warns if `joinMenu` names it.
+
+Cancelling pending `MENU` actions aimed at the deleted menu was listed here in an earlier
+revision and has been **removed deliberately**. The other cascade items each prevent a real
+problem — a stale view, an orphaned prompt, a `BACK` into a dead menu. That one prevented only a
+message, since the executor already tells the player the menu does not exist and leaves history
+untouched. Implementing it would mean `ActionExecutor` retaining every pending sequence's
+remaining steps solely to answer that query.
 
 ### 3.6 `save` and `reload`
 
@@ -357,6 +378,11 @@ affordance.
 
 Items handed out by the plugin carry a hidden persistent-data tag. Matching checks that
 tag **first**; the match mode applies only to items the plugin did not dispense.
+
+**A tagged item opens its menu only while that menu still has a bound item.** The tag names
+*which* menu; the binding is what says an item may open it at all. So `unset` revokes every
+copy already dispensed by `give`, which is what an admin removing a binding plainly intends.
+Without this, dispensed items outlive the binding and access cannot be revoked.
 
 | Mode | Matches when |
 |---|---|

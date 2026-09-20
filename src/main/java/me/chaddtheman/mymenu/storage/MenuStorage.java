@@ -42,9 +42,24 @@ public interface MenuStorage {
      * Reads every menu. Malformed entries are skipped, logged, and put storage into the
      * degraded state; the future still completes normally with whatever did load. It fails
      * only if the backend holds changes it has not managed to write, since a fresh load would
-     * discard them.
+     * discard them; the failure is then an {@link UnwrittenChangesException}.
      */
     CompletableFuture<Collection<Menu>> loadAll();
+
+    /**
+     * Writes again the changes an earlier write failed to persist, if there are any. Completes
+     * normally when there were none or the retry succeeded, exceptionally when it failed again.
+     * Reload calls this first, so fixing the fault and reloading keeps the work.
+     */
+    CompletableFuture<Void> retryUnwritten();
+
+    /**
+     * Forgets that the backend holds changes it could not write, so that the next
+     * {@link #loadAll} re-reads the durable copy instead of refusing. Completes with whether
+     * anything was dropped. The explicit discard form of reload is the only caller: it is the way
+     * out when the fault is permanent and the changes would be lost at shutdown anyway (SPEC §12).
+     */
+    CompletableFuture<Boolean> discardUnwritten();
 
     /** Writes these menus, adding or replacing each by name. Other menus are untouched. */
     CompletableFuture<Void> saveAll(Collection<Menu> menus);
@@ -68,4 +83,12 @@ public interface MenuStorage {
 
     /** Stops the backend's thread, waiting a bounded time for queued work. Call after {@link #flush}. */
     void close();
+
+    /** {@link #loadAll} refused because re-reading would throw away changes not yet written. */
+    final class UnwrittenChangesException extends IllegalStateException {
+
+        public UnwrittenChangesException(String message) {
+            super(message);
+        }
+    }
 }

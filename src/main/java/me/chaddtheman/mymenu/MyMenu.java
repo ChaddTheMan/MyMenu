@@ -20,13 +20,30 @@ package me.chaddtheman.mymenu;
 import me.chaddtheman.mymenu.action.ActionExecutor;
 import me.chaddtheman.mymenu.action.ActionParser;
 import me.chaddtheman.mymenu.action.ActionTextResolver;
+import io.papermc.paper.plugin.lifecycle.event.types.LifecycleEvents;
+import me.chaddtheman.mymenu.command.ChangelogCommand;
+import me.chaddtheman.mymenu.command.CommandTree;
+import me.chaddtheman.mymenu.command.CreateCommand;
+import me.chaddtheman.mymenu.command.DeleteCommand;
+import me.chaddtheman.mymenu.command.EditCommand;
+import me.chaddtheman.mymenu.command.GiveCommand;
+import me.chaddtheman.mymenu.command.HelpCommand;
+import me.chaddtheman.mymenu.command.InfoCommand;
+import me.chaddtheman.mymenu.command.JoinMenuCommand;
+import me.chaddtheman.mymenu.command.ListCommand;
+import me.chaddtheman.mymenu.command.NameCommand;
+import me.chaddtheman.mymenu.command.OpenCommand;
+import me.chaddtheman.mymenu.command.ReloadCommand;
+import me.chaddtheman.mymenu.command.SaveCommand;
+import me.chaddtheman.mymenu.command.SetCommand;
+import me.chaddtheman.mymenu.command.UnsetCommand;
+import me.chaddtheman.mymenu.command.UpdateCommand;
 import me.chaddtheman.mymenu.config.PluginConfig;
 import me.chaddtheman.mymenu.listener.InventoryClickListener;
 import me.chaddtheman.mymenu.listener.InventoryCloseListener;
 import me.chaddtheman.mymenu.listener.InventoryDragListener;
 import me.chaddtheman.mymenu.listener.PlayerInteractListener;
 import me.chaddtheman.mymenu.listener.PlayerQuitListener;
-import me.chaddtheman.mymenu.model.Menu;
 import me.chaddtheman.mymenu.render.ItemBuilder;
 import me.chaddtheman.mymenu.render.MenuRenderer;
 import me.chaddtheman.mymenu.render.TokenReplacer;
@@ -34,15 +51,19 @@ import me.chaddtheman.mymenu.service.CooldownStore;
 import me.chaddtheman.mymenu.service.MenuService;
 import me.chaddtheman.mymenu.session.SessionManager;
 import me.chaddtheman.mymenu.storage.DebouncedMenuWriter;
+import me.chaddtheman.mymenu.storage.ItemSerializer;
 import me.chaddtheman.mymenu.storage.YamlMenuStorage;
 import org.bukkit.plugin.PluginManager;
 import org.bukkit.plugin.java.JavaPlugin;
 import org.jspecify.annotations.Nullable;
 import org.slf4j.Logger;
 
-import java.util.Collection;
+import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executor;
+import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Consumer;
 
 /**
  * Plugin entry point.
@@ -75,8 +96,10 @@ public final class MyMenu extends JavaPlugin {
     private @Nullable MenuService menuService;
     private @Nullable SessionManager sessions;
 
-    private record Loaded(PluginConfig config, Collection<Menu> menus) {
-    }
+    // Written on the main thread by load and reload, and by a joinmenu write from another thread.
+    private final AtomicReference<PluginConfig> config = new AtomicReference<>(PluginConfig.DEFAULTS);
+    // Chains config.yml writes so two quick joinmenu commands land in order. Main thread only.
+    private CompletableFuture<Void> configWrites = CompletableFuture.completedFuture(null);
 
     @Override
     public void onEnable() {
@@ -89,8 +112,7 @@ public final class MyMenu extends JavaPlugin {
             }
         };
 
-        // TODO(stage 7): actions.maxTotalDelaySeconds and navigation.maxDepth come from config.yml
-        // once PluginConfig reads them; until then these are SPEC's defaults (§9.2, §9.3).
+        // Built with SPEC's defaults; applyConfig replaces them before the first load parses anything.
         ActionParser actions = new ActionParser(logger, ActionParser.DEFAULT_MAX_TOTAL_DELAY_SECONDS);
         YamlMenuStorage storage = new YamlMenuStorage(getDataPath(), actions, mainThread, logger);
         DebouncedMenuWriter writer = new DebouncedMenuWriter(this, storage, mainThread, logger);
@@ -109,29 +131,85 @@ public final class MyMenu extends JavaPlugin {
         // TODO(stage 9): TextService replaces the parsing-only resolver with one that substitutes.
         ActionExecutor executor = new ActionExecutor(this, sessions, new CooldownStore(),
                 ActionTextResolver.parsingOnly(items::parse), logger, ActionExecutor.DEFAULT_MAX_DEPTH);
+        Consumer<PluginConfig> applyConfig = loaded -> applyConfig(loaded, storage, writer, actions, executor);
 
+        PlayerInteractListener interact =
+                new PlayerInteractListener(this, menuService.registry(), sessions, items, logger);
         PluginManager plugins = getServer().getPluginManager();
         plugins.registerEvents(executor, this);
         plugins.registerEvents(new InventoryClickListener(this, menuService.registry(), sessions,
                 executor::dispatch), this);
         plugins.registerEvents(new InventoryDragListener(), this);
         plugins.registerEvents(new InventoryCloseListener(sessions), this);
-        plugins.registerEvents(new PlayerInteractListener(this, menuService.registry(), sessions, items, logger), this);
+        plugins.registerEvents(interact, this);
         plugins.registerEvents(new PlayerQuitListener(sessions), this);
 
+        ReloadCommand reload = new ReloadCommand(this, mainThread, storage, writer, menuService, sessions, executor,
+                config, applyConfig);
+        CommandTree commands = new CommandTree(logger, menuService, reload::isRunning, new CommandTree.Subcommands(
+                new HelpCommand(),
+                new ListCommand(menuService.registry()),
+                new InfoCommand(config::get),
+                new OpenCommand(this, sessions),
+                new EditCommand(this, sessions),
+                new CreateCommand(menuService),
+                new DeleteCommand(this, menuService, sessions, config::get),
+                new SetCommand(menuService, new ItemSerializer(items), interact.boundItemKey()),
+                new UnsetCommand(menuService),
+                new GiveCommand(items, interact.boundItemKey()),
+                new JoinMenuCommand(this::writeJoinMenu, mainThread),
+                new NameCommand(items),
+                new SaveCommand(menuService, writer, mainThread),
+                reload,
+                new ChangelogCommand(this, mainThread),
+                new UpdateCommand(this)));
+        // Fires again on every datapack reload, so register must be safe to repeat.
+        getLifecycleManager().registerEventHandler(LifecycleEvents.COMMANDS,
+                event -> commands.register(event.registrar()));
+
         CompletableFuture.supplyAsync(() -> PluginConfig.load(getDataPath(), logger))
-                .thenCompose(config -> {
-                    storage.setBackupPolicy(config.backupsKeep(), config.backupsMinInterval());
-                    return storage.loadAll().thenApply(menus -> new Loaded(config, menus));
-                })
-                .thenAcceptAsync(loaded -> {
-                    writer.setDebounce(loaded.config().writeDebounce());
-                    menuService.replaceAll(loaded.menus());
+                .thenComposeAsync(loaded -> {
+                    config.set(loaded);
+                    if (loaded.storageType() != PluginConfig.StorageType.YAML) {
+                        logger.warn("storage.type {} is not available in this build; using YAML", loaded.storageType());
+                    }
+                    applyConfig.accept(loaded);
+                    return storage.loadAll();
                 }, mainThread)
+                .thenAcceptAsync(menuService::replaceAll, mainThread)
                 .exceptionally(failure -> {
                     logger.error("Menus could not be loaded; menu editing stays disabled", failure);
                     return null;
                 });
+    }
+
+    /**
+     * The one place settings reach the objects that cache them, used by enable and by reload.
+     * Main thread, because the writer's debounce is main-thread state. It runs before a load, so
+     * the delay cap applies to the menus that load parses.
+     */
+    private static void applyConfig(PluginConfig config, YamlMenuStorage storage, DebouncedMenuWriter writer,
+                                    ActionParser actions, ActionExecutor executor) {
+        storage.setBackupPolicy(config.backupsKeep(), config.backupsMinInterval());
+        writer.setDebounce(config.writeDebounce());
+        actions.setMaxTotalDelaySeconds(config.maxTotalDelaySeconds());
+        executor.setMaxDepth(config.maxDepth());
+    }
+
+    /** Main thread. The future fails if the file could not be written, and then nothing changed. */
+    private CompletableFuture<Void> writeJoinMenu(String menuName) {
+        CompletableFuture<Void> write = configWrites
+                .exceptionally(earlier -> null)
+                .thenRunAsync(() -> {
+                    try {
+                        PluginConfig.writeJoinMenu(getDataPath(), menuName, getSLF4JLogger());
+                    } catch (IOException e) {
+                        throw new UncheckedIOException(e);
+                    }
+                })
+                .thenRun(() -> config.updateAndGet(current -> current.withJoinMenu(menuName)));
+        configWrites = write;
+        return write;
     }
 
     @Override

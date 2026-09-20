@@ -506,6 +506,12 @@ exactly where classloader leaks originate.
 
 `/mymenu reload` is unaffected by any of this.
 
+**Closed at stage 7.** Paper exposes `AsyncPlayerSendSuggestionsEvent`, whose name and
+`PlayerEvent` shape indicate the suggestion path for a real player is at least sometimes
+off-thread, so the code is written as though it always is. Every suggestion provider reads only
+immutable data: the registry's snapshot, constant lists, and `hasPermission`. None reads a
+session, an open inventory, or storage.
+
 **Resolved at stage 2.** This was an open risk while models were mutable: if Paper computes
 suggestions off the main thread, the `<menu>` provider would read a main-thread-only
 registry. Immutable models plus copy-on-write publication through a volatile field
