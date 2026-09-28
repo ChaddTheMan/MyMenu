@@ -504,6 +504,12 @@ shapes.
 - `InventoryCloseEvent.getReason()` is unverified against current Paper. Confirm before
   relying on it.
 
+**Correction (2026-09-20, stage 8 preparation):** the last bullet is settled and is no longer an
+open question. Stage 5 confirmed `InventoryCloseEvent.getReason()` and the full `Reason` constant
+list against `paper-api 26.2` with `javap`, and #78 records the ruling that follows from it,
+including that `TELEPORT` is deprecated and never fires. ARCHITECTURE §5.2's matching
+"unverified" note has been replaced with the verified list. Nothing else in this entry changes.
+
 ---
 
 ### 56. bStats: nine charts, shapes only, global opt-out

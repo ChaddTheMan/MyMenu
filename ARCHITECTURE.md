@@ -294,9 +294,13 @@ distinguishing "replaced by another inventory" from a real close.
 The prompt state is recorded *before* the plugin closes the inventory, and the close
 handler checks for it.
 
-**Unverified:** `InventoryCloseEvent.getReason()` and `Reason.OPEN_NEW` were not confirmed
-against current Paper during the audit. Verify before relying on them; §5.1 keeps the
-lockout safe either way.
+**Verified at stage 5** against `paper-api 26.2`, with `javap`. `InventoryCloseEvent.getReason()`
+exists, and `Reason` has exactly `UNKNOWN`, `TELEPORT`, `CANT_USE`, `UNLOADED`, `OPEN_NEW`,
+`PLAYER`, `DISCONNECT`, `DEATH` and `PLUGIN`, with `OPEN_NEW` documented as "opening new
+inventory instead". `SessionManager.closed` therefore names the one reason that does **not** end
+a session rather than listing the ones that do, so a constant added to the API later cannot leak
+a session. `TELEPORT` is deprecated since 1.21.10 and never fires — inventories are no longer
+closed on teleport — which is why a world change is not a close path at all (DECISIONS #78).
 
 **Unconditional rules that do still hold:** no session survives `PlayerQuitEvent`; no code
 path leaves a session behind on an exception (cleanup in `finally`); every chat prompt
@@ -541,6 +545,11 @@ and slot as instance fields on singleton listeners, then used `this.player` insi
 message.
 
 **Players are tracked by UUID, never by name.** 1.x used names.
+
+**`PlayerQuitListener` handles sessions only.** Cancelling a pending action sequence on quit is
+`ActionExecutor`'s own `PlayerQuitEvent` handler, not this listener's. The pending map lives on
+the executor because a sequence must survive death, and death ends the session, so the two must
+not be coupled; the class that owns the state owns its cleanup (DECISIONS #84).
 
 Bound-item interaction fires once per hand; only the main hand is handled, and the event
 is cancelled. Both left- and right-click open a menu, matching 1.x.

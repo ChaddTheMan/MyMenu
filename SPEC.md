@@ -86,7 +86,7 @@ makes `/mymenu create shop Chest Shop` ambiguous.
 ### 3.2 Menu names
 
 Menu names are restricted to `[a-z0-9_-]`, maximum 32 characters, and are lowercased on
-input.
+input. This prevents `.` from breaking YAML paths and removes case-collision confusion.
 
 **`none` is rejected by `/mymenu create`**, because `joinmenu none` uses it to mean "no menu".
 The reservation lives in the **command layer only**, and is deliberately not a model invariant.
@@ -96,7 +96,8 @@ An earlier revision of this section called `none` invalid outright. That was wro
 in `Menu`'s constructor would make a hand-written `menus.yml` containing such a menu fail to
 load, which skips the menu and degrades storage — disabling editing server-wide over a name
 collision whose only real effect is that one setting cannot point at it. Model invariants are
-for things that make a menu impossible to render or store, and a name is neither. This prevents `.` from breaking YAML paths and removes case-collision confusion.
+for things that make a menu impossible to render or store, and a name is neither.
+
 **Titles** are unrestricted: full colour, Unicode, any length the client accepts.
 
 ### 3.3 `set`, `unset`, `give`
