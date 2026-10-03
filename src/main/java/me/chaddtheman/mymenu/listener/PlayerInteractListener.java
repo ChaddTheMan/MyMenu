@@ -49,10 +49,18 @@ import java.util.Set;
  *
  * <h2>Tag first, then the configured mode</h2>
  *
- * An item the plugin handed out carries a persistent-data tag naming its menu, and that tag is
- * the whole answer: it matches its menu, or nothing if that menu is gone. The match mode applies
- * only to items the plugin did not dispense, and menus are tried in name order so the first name
- * wins a tie (SPEC §7).
+ * An item the plugin handed out carries a persistent-data tag naming its menu. The tag says
+ * <em>which</em> menu; the menu's binding says whether an item may open it at all. So a tagged
+ * item opens its menu only while that menu exists and still has a bound item, and {@code unset}
+ * revokes every copy {@code give} handed out (SPEC §7). A tagged item whose menu is gone or unbound
+ * opens nothing: it never falls through to the match modes, which apply only to items the plugin
+ * did not dispense. Untagged items are tried against each menu's match mode in name order, so the
+ * first name wins a tie.
+ *
+ * <p>If the menu is bound again later, old tagged copies open it again. That is expected, not a
+ * bug to fix here: what else should happen to old copies (removing them, replacing them, a revoke
+ * command, a binding id that changes when {@code set} binds a different item) is an open planning
+ * question (O23).
  *
  * <h2>The tag is not the rendered-icon tag</h2>
  *
@@ -115,7 +123,7 @@ public final class PlayerInteractListener implements Listener {
     private @Nullable String match(ItemStack held) {
         String tagged = held.getPersistentDataContainer().get(boundItemKey, PersistentDataType.STRING);
         if (tagged != null) {
-            return registry.contains(tagged) ? tagged : null;
+            return registry.find(tagged).filter(menu -> menu.boundItem() != null).map(Menu::name).orElse(null);
         }
         for (Menu menu : registry.menus()) {
             BoundItem bound = menu.boundItem();

@@ -43,16 +43,14 @@ import java.util.function.Supplier;
  * The registry drops the menu first, through {@code MenuService}, which refuses while storage is
  * degraded. The delete backup is written by storage before the menu leaves {@code menus.yml}; if
  * the backup fails the menu stays in the file and a reload brings it back. Everything a player can
- * see is then cleaned up on the next tick, because this command may be running inside a menu
- * click, where closing an inventory is not allowed (rule 9). In the gap, a click on the deleted
- * menu already fails the stale-view check, which closes it.
+ * see is then cleaned up on the next tick, as every screen a command opens or closes is (DECISIONS
+ * #89). That rule was made while menu clicks ran their commands inside the click event; since stage
+ * 7.4 they run on a scheduled task, but the deferral is kept, and a command still cannot tell what
+ * it was dispatched from. In the gap, a click on the deleted menu already fails the stale-view
+ * check, which closes it.
  *
- * <h2>What is not cancelled</h2>
- *
- * SPEC §3.5 also asks for pending {@code MENU} actions that target the menu to be cancelled.
- * {@code ActionExecutor} can cancel a player's whole pending sequence but cannot say what the
- * sequence still holds, so that step needs a change in {@code action/} and is not done here. Until
- * then such an action finds no menu when it fires, and the player is told the menu does not exist.
+ * <p>A pending {@code MENU} action that names the menu is not cancelled (DECISIONS #92). When it
+ * fires it finds no menu, and the player is told the menu does not exist.
  */
 public final class DeleteCommand {
 

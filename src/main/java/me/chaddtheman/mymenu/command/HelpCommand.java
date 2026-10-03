@@ -68,7 +68,7 @@ public final class HelpCommand {
             Replies.info(sender, "Only a player can use it.");
         }
         if (spec.mutating()) {
-            Replies.info(sender, "Refused while menu storage is degraded.");
+            Replies.info(sender, "Refused while menus are loading or reloading, or while menu storage is degraded.");
         }
     }
 }

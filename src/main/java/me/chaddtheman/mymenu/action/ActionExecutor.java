@@ -20,9 +20,11 @@ package me.chaddtheman.mymenu.action;
 import me.chaddtheman.mymenu.model.ClickKey;
 import me.chaddtheman.mymenu.model.MenuItem;
 import me.chaddtheman.mymenu.model.VersionedMenu;
+import me.chaddtheman.mymenu.render.ViewMode;
 import me.chaddtheman.mymenu.service.CooldownStore;
 import me.chaddtheman.mymenu.session.NavigationStack;
 import me.chaddtheman.mymenu.session.SessionManager;
+import me.chaddtheman.mymenu.session.ViewSession;
 import net.kyori.adventure.sound.Sound;
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.format.NamedTextColor;
@@ -36,6 +38,7 @@ import org.bukkit.permissions.PermissionAttachment;
 import org.bukkit.plugin.Plugin;
 import org.bukkit.scheduler.BukkitScheduler;
 import org.bukkit.scheduler.BukkitTask;
+import org.jspecify.annotations.Nullable;
 import org.slf4j.Logger;
 
 import java.time.Duration;
@@ -49,15 +52,34 @@ import java.util.UUID;
 /**
  * Runs an item's action list for the player who clicked it.
  *
- * <h2>Why this is not a loop over the list</h2>
+ * <h2>Why the whole list waits for the next tick</h2>
  *
- * Three of the eight action types cannot run where the click arrives. {@code DELAY} has to
- * stop the list and pick it up again on a later tick, so the "current position" of a list must
- * survive outside any stack frame: {@link #run} walks until it meets a delay, hands the rest of
- * the list and the index to a scheduled task, and returns. {@code MENU}, {@code BACK} and
- * {@code CLOSE} open or close an inventory, which is not allowed inside
- * {@code InventoryClickEvent} (rule 9), so each is queued for the next tick while the walk
- * carries on; the actions after them do not wait for the inventory to change.
+ * The click arrives inside {@code InventoryClickEvent}, and an event handler does only what decides
+ * the event's outcome, plus the bookkeeping that belongs to that moment (CLAUDE.md, rule 9).
+ * {@link #dispatch} therefore does the click's part and nothing more: it refuses a click while a list
+ * is pending, applies the cooldown, plays the click sound, and schedules the list for the next tick.
+ * Running the list is not part of the click's outcome. A {@code PLAYER} action can run any plugin's
+ * command, and a command that opens a screen from inside a click handler is exactly what rule 9
+ * forbids. Deferring only {@code MENU}, {@code BACK} and {@code CLOSE}, as stage 6 did, left the
+ * commands in the handler and reordered the list: {@code [CLOSE, PLAYER warps]} queued the close
+ * behind the warps screen and closed that instead.
+ *
+ * <p>Because every list now starts on a scheduled task, the steps that open and close screens run
+ * in place, in the order they are written. That is safe only on a scheduled task, so the code is
+ * shaped to keep it there: the walk is {@link Sequence#run}, and the one place a {@code Sequence} is
+ * made hands it straight to the scheduler. No caller ever holds a sequence it could run inline.
+ *
+ * <h2>Why this is still not a loop over the list</h2>
+ *
+ * {@code DELAY} has to stop the list and pick it up again on a later tick, so the position in the
+ * list must survive outside any stack frame. The {@code Sequence} carries it: the walk runs until it
+ * meets a delay, schedules the same sequence again, and returns.
+ *
+ * <h2>Pending from the click, not from the first step</h2>
+ *
+ * The player is recorded as pending when the list is scheduled, so a second click in the same tick
+ * is refused and a quit before the tick cancels the list. A list with nothing executable in it, only
+ * delays, is never scheduled at all, so it holds no one pending (SPEC §9.2).
  *
  * <h2>Why pending sequences are not session state</h2>
  *
@@ -71,6 +93,18 @@ import java.util.UUID;
  * until it finishes. The entry is written only once the task is scheduled and removed by the
  * task itself when it fires, so unlike 1.x's session map it cannot be left set with nothing
  * behind it: the worst a bug here could do is cancel a task that had already run.
+ *
+ * <h2>{@code CLOSE} closes only the menu its list was acting on</h2>
+ *
+ * A list remembers the view session it was clicked in, and {@code CLOSE} closes the player's screen
+ * only while that same session object is the one open. Anything else the player is looking at by
+ * then, another plugin's screen opened by a {@code PLAYER} action, a chest opened during a delay, an
+ * editor, a menu they opened themselves (which always starts a new session), is left alone, without
+ * a word. When the list's own {@code MENU} or {@code BACK} opens a menu, the list follows it to the
+ * session that menu is now open in, which is the same session unless the player had closed the menu
+ * during a delay. The open screen is also checked to be a menu in view mode, because
+ * {@link SessionManager#view} keeps a session valid for the tick in which its menu was opened even if
+ * something else has already replaced it.
  *
  * <h2>The elevation window is the synchronous dispatch and nothing more</h2>
  *
@@ -88,6 +122,9 @@ public final class ActionExecutor implements Listener {
 
     /** Outside {@code MyMenu.*} on purpose so ops still feel cooldowns while testing them. */
     public static final String BYPASS_COOLDOWN = "MyMenu.bypass.cooldown";
+
+    // A delay of 0 still runs on the scheduler's next pass, which is the next tick.
+    private static final long NEXT_TICK = 0L;
 
     // TODO(stage 10): messages.yml.
     private static final String COOLDOWN_MESSAGE = "You can use that again in %d seconds.";
@@ -116,7 +153,6 @@ public final class ActionExecutor implements Listener {
      * Clamped to 1..{@link NavigationStack#MAX_DEPTH}. The stack's ceiling is the invariant;
      * a config value above it would otherwise start dropping history silently.
      */
-    // TODO(stage 7): config plumbing calls this once navigation.maxDepth is read.
     public void setMaxDepth(int depth) {
         int clamped = Math.clamp(depth, 1, NavigationStack.MAX_DEPTH);
         if (clamped != depth) {
@@ -125,7 +161,10 @@ public final class ActionExecutor implements Listener {
         this.maxDepth = clamped;
     }
 
-    /** {@code InventoryClickListener.Dispatcher}: the click has been validated and its list chosen. */
+    /**
+     * {@code InventoryClickListener.Dispatcher}: the click has been validated and its list chosen.
+     * Runs inside the click event, so it decides the click and schedules the list; it runs nothing.
+     */
     public void dispatch(Player player, VersionedMenu menu, int slot, MenuItem item, ClickKey key,
                          List<Action> actions) {
         // An empty list means "this click does nothing" (SPEC §8.4); it earns no feedback
@@ -151,7 +190,10 @@ public final class ActionExecutor implements Listener {
         if (item.clickSound() != null) {
             player.playSound(Sound.sound(item.clickSound(), Sound.Source.MASTER, 1f, 1f));
         }
-        run(player, actions, 0);
+        if (!hasExecutableFrom(actions, 0)) {
+            return;
+        }
+        schedule(new Sequence(player, actions, sessions.view(player).orElse(null)), NEXT_TICK);
     }
 
     /** True while the player is mid-sequence. For probes and reports. */
@@ -159,32 +201,10 @@ public final class ActionExecutor implements Listener {
         return pending.containsKey(player);
     }
 
-    /**
-     * Executes from {@code from} until the list ends or a delay suspends it. A step that throws
-     * ends the sequence: the steps after it were written on the assumption that it ran. A delay
-     * with nothing executable after it ends the sequence too (SPEC §9.2), so a trailing
-     * {@code DELAY} does not hold the player pending for nothing.
-     */
-    private void run(Player player, List<Action> actions, int from) {
-        UUID id = player.getUniqueId();
-        for (int i = from; i < actions.size(); i++) {
-            Action action = actions.get(i);
-            if (action instanceof Action.Delay delay) {
-                int next = i + 1;
-                if (!hasExecutableFrom(actions, next)) {
-                    return;
-                }
-                BukkitTask task = scheduler().runTaskLater(plugin, () -> resume(player, actions, next), delay.ticks());
-                pending.put(id, task);
-                return;
-            }
-            try {
-                execute(player, action);
-            } catch (RuntimeException e) {
-                logger.warn("Action {} for {} failed; the rest of the list was not run", action, player.getName(), e);
-                return;
-            }
-        }
+    /** The only door to the scheduler, and the only place a player becomes pending. */
+    private void schedule(Sequence sequence, long delayTicks) {
+        BukkitTask task = scheduler().runTaskLater(plugin, sequence, delayTicks);
+        pending.put(sequence.player.getUniqueId(), task);
     }
 
     private static boolean hasExecutableFrom(List<Action> actions, int from) {
@@ -196,26 +216,22 @@ public final class ActionExecutor implements Listener {
         return false;
     }
 
-    private void resume(Player player, List<Action> actions, int from) {
-        pending.remove(player.getUniqueId());
-        // The quit handler cancels the task, so this only guards a quit that raced the tick.
-        if (!player.isOnline()) {
-            return;
-        }
-        run(player, actions, from);
-    }
-
-    private void execute(Player player, Action action) {
+    private void execute(Sequence sequence, Action action) {
+        Player player = sequence.player;
         switch (action) {
             case Action.PlayerCommand command -> player.performCommand(command(command.command(), player));
             case Action.ConsoleCommand command ->
                     Bukkit.dispatchCommand(Bukkit.getConsoleSender(), command(command.command(), player));
             case Action.ElevatedCommand command -> elevated(player, command);
             case Action.Message message -> player.sendMessage(text.message(message.text(), player));
-            case Action.OpenMenu menu -> nextTick(player, () -> open(player, menu.menuName()));
-            case Action.Back ignored -> nextTick(player, () -> sessions.back(player));
-            case Action.Close ignored -> nextTick(player, player::closeInventory);
-            case Action.Delay ignored -> throw new IllegalStateException("delays are handled by run()");
+            case Action.OpenMenu menu -> open(sequence, menu.menuName());
+            case Action.Back ignored -> {
+                if (sessions.back(player) == SessionManager.OpenResult.OPENED) {
+                    sequence.followOpenMenu();
+                }
+            }
+            case Action.Close ignored -> close(sequence);
+            case Action.Delay ignored -> throw new IllegalStateException("delays are handled by Sequence.run()");
         }
     }
 
@@ -240,25 +256,33 @@ public final class ActionExecutor implements Listener {
         }
     }
 
-    private void open(Player player, String menuName) {
+    private void open(Sequence sequence, String menuName) {
+        Player player = sequence.player;
         int depth = sessions.view(player).map(session -> session.history().size()).orElse(0);
         if (depth >= maxDepth) {
             logger.warn("{} is {} menus deep; MENU '{}' refused by navigation.maxDepth ({})",
                     player.getName(), depth, menuName, maxDepth);
             return;
         }
-        if (sessions.navigate(player, menuName) == SessionManager.OpenResult.NO_SUCH_MENU) {
-            logger.warn("MENU action names '{}', which does not exist", menuName);
-            player.sendMessage(MENU_MISSING);
+        switch (sessions.navigate(player, menuName)) {
+            case OPENED -> sequence.followOpenMenu();
+            case NO_SUCH_MENU -> {
+                logger.warn("MENU action names '{}', which does not exist", menuName);
+                player.sendMessage(MENU_MISSING);
+            }
+            case CANCELLED, NO_HISTORY -> {
+                // Another plugin refused the open; navigate never reports NO_HISTORY.
+            }
         }
     }
 
-    private void nextTick(Player player, Runnable work) {
-        scheduler().runTask(plugin, () -> {
-            if (player.isOnline()) {
-                work.run();
-            }
-        });
+    private void close(Sequence sequence) {
+        Player player = sequence.player;
+        boolean menuOpen = SessionManager.openHolder(player).map(holder -> holder.mode() == ViewMode.VIEW).orElse(false);
+        ViewSession open = sessions.view(player).orElse(null);
+        if (menuOpen && open != null && open == sequence.session) {
+            player.closeInventory();
+        }
     }
 
     private BukkitScheduler scheduler() {
@@ -276,6 +300,62 @@ public final class ActionExecutor implements Listener {
         BukkitTask task = pending.remove(player);
         if (task != null) {
             task.cancel();
+        }
+    }
+
+    /**
+     * One action list on its way through, from the tick after the click. Built only in
+     * {@link #dispatch}, which passes it straight to {@link #schedule}; the scheduler is the only
+     * caller of {@link #run}. The list is the one captured at the click, so an edit made while it
+     * waits on a delay does not change what it does.
+     */
+    private final class Sequence implements Runnable {
+
+        private final Player player;
+        private final List<Action> actions;
+        // The view session CLOSE may close. Null when the click had none, and then CLOSE does nothing.
+        private @Nullable ViewSession session;
+        private int next;
+
+        private Sequence(Player player, List<Action> actions, @Nullable ViewSession session) {
+            this.player = player;
+            this.actions = List.copyOf(actions);
+            this.session = session;
+        }
+
+        /**
+         * Executes until the list ends or a delay suspends it. A step that throws ends the sequence:
+         * the steps after it were written on the assumption that it ran. A delay with nothing
+         * executable after it ends the sequence too (SPEC §9.2).
+         */
+        @Override
+        public void run() {
+            pending.remove(player.getUniqueId());
+            while (next < actions.size()) {
+                // The quit handler cancels a waiting task; this catches a quit that raced the tick,
+                // or one caused by an earlier step of this list, such as a kick command.
+                if (!player.isOnline()) {
+                    return;
+                }
+                Action action = actions.get(next++);
+                if (action instanceof Action.Delay delay) {
+                    if (hasExecutableFrom(actions, next)) {
+                        schedule(this, delay.ticks());
+                    }
+                    return;
+                }
+                try {
+                    execute(this, action);
+                } catch (RuntimeException e) {
+                    logger.warn("Action {} for {} failed; the rest of the list was not run", action, player.getName(), e);
+                    return;
+                }
+            }
+        }
+
+        /** A {@code MENU} or {@code BACK} of this list opened a menu; {@code CLOSE} now means that one. */
+        private void followOpenMenu() {
+            session = sessions.view(player).orElse(null);
         }
     }
 }

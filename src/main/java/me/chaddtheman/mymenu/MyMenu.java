@@ -116,7 +116,7 @@ public final class MyMenu extends JavaPlugin {
         ActionParser actions = new ActionParser(logger, ActionParser.DEFAULT_MAX_TOTAL_DELAY_SECONDS);
         YamlMenuStorage storage = new YamlMenuStorage(getDataPath(), actions, mainThread, logger);
         DebouncedMenuWriter writer = new DebouncedMenuWriter(this, storage, mainThread, logger);
-        MenuService menuService = new MenuService(writer);
+        MenuService menuService = new MenuService(writer, ActionParser.DEFAULT_MAX_TOTAL_DELAY_SECONDS);
         this.storage = storage;
         this.writer = writer;
         this.menuService = menuService;
@@ -131,7 +131,8 @@ public final class MyMenu extends JavaPlugin {
         // TODO(stage 9): TextService replaces the parsing-only resolver with one that substitutes.
         ActionExecutor executor = new ActionExecutor(this, sessions, new CooldownStore(),
                 ActionTextResolver.parsingOnly(items::parse), logger, ActionExecutor.DEFAULT_MAX_DEPTH);
-        Consumer<PluginConfig> applyConfig = loaded -> applyConfig(loaded, storage, writer, actions, executor);
+        Consumer<PluginConfig> applyConfig =
+                loaded -> applyConfig(loaded, storage, writer, actions, menuService, executor);
 
         PlayerInteractListener interact =
                 new PlayerInteractListener(this, menuService.registry(), sessions, items, logger);
@@ -146,7 +147,7 @@ public final class MyMenu extends JavaPlugin {
 
         ReloadCommand reload = new ReloadCommand(this, mainThread, storage, writer, menuService, sessions, executor,
                 config, applyConfig);
-        CommandTree commands = new CommandTree(logger, menuService, reload::isRunning, new CommandTree.Subcommands(
+        CommandTree commands = new CommandTree(logger, menuService, new CommandTree.Subcommands(
                 new HelpCommand(),
                 new ListCommand(menuService.registry()),
                 new InfoCommand(config::get),
@@ -186,13 +187,15 @@ public final class MyMenu extends JavaPlugin {
     /**
      * The one place settings reach the objects that cache them, used by enable and by reload.
      * Main thread, because the writer's debounce is main-thread state. It runs before a load, so
-     * the delay cap applies to the menus that load parses.
+     * the delay cap applies to the menus that load parses. The parser clamps what loads; the
+     * service refuses changes that exceed the same cap, so both copies must follow every reload.
      */
     private static void applyConfig(PluginConfig config, YamlMenuStorage storage, DebouncedMenuWriter writer,
-                                    ActionParser actions, ActionExecutor executor) {
+                                    ActionParser actions, MenuService menuService, ActionExecutor executor) {
         storage.setBackupPolicy(config.backupsKeep(), config.backupsMinInterval());
         writer.setDebounce(config.writeDebounce());
         actions.setMaxTotalDelaySeconds(config.maxTotalDelaySeconds());
+        menuService.setMaxTotalDelaySeconds(config.maxTotalDelaySeconds());
         executor.setMaxDepth(config.maxDepth());
     }
 

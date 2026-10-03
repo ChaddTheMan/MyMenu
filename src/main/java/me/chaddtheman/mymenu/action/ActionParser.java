@@ -47,7 +47,10 @@ import java.util.Set;
  * clamped with a warning, never rejected and never checked at run time. A per-entry check
  * cannot see the total, so this codec reads whole lists ({@link #readList}) and clamps once,
  * reducing the delay that crosses the cap and zeroing those after it, so the actions still run
- * in order and the file is repaired on its next save. The same clamp covers shorthand input.
+ * in order and the file is repaired on its next save. {@link #parseList} applies the same clamp,
+ * though the shorthand has no {@code DELAY} form, so a typed list has nothing to clamp today.
+ * {@link #read} parses one entry and cannot see a total, so it applies no cap; a list built from
+ * single entries reaches the model only through {@code MenuService}, which refuses one over the cap.
  *
  * <p>Thread-safe: reading happens on whichever thread storage loads on, and the cap can be
  * changed from the main thread after config loads.
@@ -72,7 +75,6 @@ public final class ActionParser implements ActionCodec {
         setMaxTotalDelaySeconds(maxTotalDelaySeconds);
     }
 
-    // TODO(stage 7): config plumbing calls this once actions.maxTotalDelaySeconds is read.
     public void setMaxTotalDelaySeconds(int seconds) {
         if (seconds < 0) {
             throw new IllegalArgumentException("maxTotalDelaySeconds is negative");

@@ -38,7 +38,8 @@ import java.util.Objects;
 public final class GiveCommand {
 
     public static final CommandSpec SPEC = new CommandSpec("give", "MyMenu.admin.menu.give",
-            "Give a player a copy of a menu's bound item that always opens it.", false, false);
+            "Give a player a copy of a menu's bound item; it opens the menu while the menu has a bound item.",
+            false, false);
 
     private final ItemBuilder items;
     private final NamespacedKey boundItemKey;

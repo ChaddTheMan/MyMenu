@@ -41,9 +41,9 @@ public final class UnsetCommand {
             return;
         }
         switch (menus.update(menu.name(), current -> current.withBoundItem(null))) {
-            // Dispensed copies are matched by their tag alone (PlayerInteractListener), so say so.
+            // A dispensed copy opens its menu only while the menu has a bound item (SPEC §7).
             case MutationResult.Applied ignored -> Replies.ok(sender, "Menu '" + menu.name() + "' no longer has a "
-                    + "bound item. Copies handed out with /mymenu give still open it while the menu exists.");
+                    + "bound item. Copies handed out with /mymenu give no longer open it.");
             case MutationResult.Refused refused -> Replies.error(sender, Replies.refusal(refused.reason(), menu.name()));
         }
     }

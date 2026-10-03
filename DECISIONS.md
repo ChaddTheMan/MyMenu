@@ -300,6 +300,9 @@ as an optimisation rather than a correctness requirement.
 **Why:** Skipping bad entries and saving later rewrites the file without them — silent,
 total, unrecoverable data loss. Refusing writes makes that structurally impossible. Chosen
 over preserving unparsed YAML nodes because it is far simpler and fails loudly.
+**Corrected 2026-10-01 (stage 7.4):** superseded by #47. The refusal moved out of storage into `MenuService`, which
+refuses before the model changes; storage only reports the condition. Since #96 the same gate
+also refuses before menus load and while a reload runs.
 
 ### 33. `onDisable` drains in-flight writes; it never initiates a save
 **Old:** No shutdown save at all.
@@ -309,6 +312,9 @@ over preserving unparsed YAML nodes because it is far simpler and fails loudly.
 Bukkit's scheduler stops accepting tasks during disable. Since every mutation already
 writes immediately, there is nothing to flush — only in-flight work to drain. This is the
 single documented exception to that rule, and it is a narrow one.
+**Corrected 2026-10-01 (stage 7.4):** superseded by #49. Debouncing (#48) means there *is* pending work at shutdown,
+so `onDisable` flushes it before draining; the title's "never initiates a save" no longer holds
+(audit F6).
 
 ### 34. `{SERVER}` reads a `serverName` config key
 **Old:** `Server#getName()`, which returns the software name.
@@ -341,10 +347,14 @@ click and re-renders.
 **Why:** Edits are not pushed to open screens (decision: they are seen on reopen). Without
 a revision check, a player could click an icon they can still see and trigger whatever
 replaced it. Also covers delete and reload while a menu is open.
+**Corrected 2026-10-01 (stage 7.4):** superseded by #46 and #61. The revision is not on the menu: the registry holds it,
+from one plugin-wide counter, and the holder records the menu name and that revision.
 
 ### 38. `MENU`, `BACK`, and `CLOSE` are scheduled for the next tick
 **Why:** Opening or closing an inventory from inside `InventoryClickEvent` is unsupported
 and misbehaves. Not a style preference.
+**Corrected 2026-10-01 (stage 7.4):** superseded by #94. The whole action list is now scheduled for the next tick, and
+`MENU`, `BACK` and `CLOSE` run in place within it.
 
 ### 39. Glow uses the enchantment glint override
 **Old:** 1.x deliberately stripped enchantments.
@@ -414,6 +424,10 @@ without limit.
 - Release tags are `v<semver>`, compared semantically. 1.x used string inequality, so an
   older remote version registered as an update.
 
+**Corrected 2026-10-01 (stage 7.4):** the editor no longer places items from the cursor; it works slot first. So
+whole-view cancellation (#80) and the editor do not conflict, nothing is ever left on a cursor
+to return, and the bullet about returning cursor items on close no longer applies (audit F5).
+
 ---
 
 ## Post-consistency-check (entries 46 onward)
@@ -469,11 +483,16 @@ MySQL database can open different menus. Permission node `MyMenu.admin.joinmenu`
 cancels pending `MENU` actions targeting it, and warns if `joinMenu` names it.
 **Why:** #43 covered the backup and closed open views, and stopped there. Every other
 reference to a deleted menu would have dangled.
+**Corrected 2026-10-01 (stage 7.4):** superseded in part by #92's correction. Pending `MENU` actions that name the
+deleted menu are not cancelled; the rest of the cascade stands.
 
 ### 53. Storage uses a single-threaded executor; snapshots are taken on the main thread
 **Why:** A single thread gives write ordering for free. Models are main-thread-only, so the
 whole-file snapshot a YAML `save(Menu)` needs must be taken before the async hop. Neither
 was stated and both are easy to get wrong silently.
+**Corrected 2026-10-01 (stage 7.4):** superseded by #61 and #65. Models are immutable rather than main-thread-only, so
+a snapshot is a reference and needs no main-thread step, and storage has no `save(Menu)`. The
+single-threaded executor stands.
 
 ### 54. Glow lives only on `ItemTemplate`
 **Why:** It appeared on both `ItemTemplate` and `MenuItem`, and the serialized item form had
@@ -562,6 +581,10 @@ release. Paper's own plugin docs use `api-version: '26.2'`. Move to 26.3 once it
 build: that means changing two values at the top of `build.gradle.kts`. Note that API
 artifacts now follow `<mc>.build.<n>-stable`, not the old `-R0.1-SNAPSHOT` form, so older
 tutorials give coordinates that do not resolve.
+**Corrected 2026-10-01 (the user's decision, 2026-09-30):** Paper 26.3 went stable on
+2026-09-20, but the project stays on 26.2 until stage 8 is finished. After stage 8 it moves to the
+latest stable Paper release at that time, which may be newer than 26.3. This replaces "Move to
+26.3 once it has a stable build".
 
 ### 59. `/reload` on 26.2: what actually happens
 **Old:** n/a.
@@ -692,6 +715,9 @@ though the scheduler stops during disable, because `flush()` cancels the timer a
 batch directly. Deletes are submitted before saves, so deleting and recreating a name within
 one window lands in the right order.
 
+**Corrected 2026-10-01 (stage 7.4):** `MenuStorage` has eight methods, not six: `retryUnwritten` (#87) and
+`discardUnwritten` (#71) were added at stage 7.
+
 ### 66. Readable or serialized is decided once, at capture, by a round trip
 **Old:** n/a (1.x stored a material name).
 **New:** The writer never chooses a form; it writes whichever `ItemTemplate` variant it is
@@ -714,6 +740,11 @@ non-italic by default, capture must apply the same rule, or those items will be 
 bytes needlessly. Verified at runtime on 26.2: plain, named-with-lore and glint-only items
 came out readable; an enchanted sword, an `italic: false` name, `R&D` and a `<!mm>` name came
 out as bytes. The sword's bytes deserialised back equal to the original minus its glint.
+
+**Corrected 2026-10-01 (stage 7.4):** the cost paragraph is superseded in part by #73. Readable text renders
+non-italic (#70) and capture uses the renderer's build, so names with an explicit
+`italic: false` now come out readable, and names that are italic only by Minecraft's default go to
+bytes. The stage 9 dependency described there is settled.
 
 ### 67. What a malformed `menus.yml` does
 **Old:** One unknown material threw and stopped the whole load.
@@ -788,6 +819,10 @@ silently replaces the first, which would lose `storage.type`. Keys are added to 
 stage that reads them; shipping unread keys implies settings that do nothing. The load gate
 exists because menus now arrive a tick or more after enable (the log shows them after
 `Done`), and an edit in that window would be overwritten when the load landed.
+**Corrected 2026-10-01 (stage 7.4):** SPEC §5.1 now has one `storage:` block, so the duplicate-key remark describes
+an earlier SPEC. The bundled `config.yml` now holds seven keys: `configVersion`, `joinMenu`,
+`storage.writeDebounceMillis`, `backups.keep`, `backups.minIntervalSeconds`,
+`navigation.maxDepth` and `actions.maxTotalDelaySeconds`.
 
 ### 70. Readable text is non-italic unless it says otherwise; capture matches
 **Old:** n/a.
@@ -866,6 +901,8 @@ actions. A barrier is visibly wrong without taking the menu down. **Open for sta
 clicking a barrier runs the slot's actions. As built, the model still has them, and nothing in
 rendering prevents it. **Open for stage 8:** the property editor cannot edit metadata it cannot
 deserialise and must refuse that clearly.
+**Corrected 2026-10-01 (stage 7.4):** the stage 6 question is closed. SPEC §8.4.0 settles that clicking a barrier
+runs the slot's actions, and the code agrees. The stage 8 question stands.
 
 ### 75. `render` takes the revision and mode; the token seam is per viewer
 **Old:** n/a.
@@ -941,6 +978,9 @@ has a `MenuHolder` on top, including clicks in the player's own inventory.
 collection and drags all start in the bottom half and reach into the top, so cancelling by
 clicked inventory alone leaks items. The cost is that a player cannot rearrange their inventory
 while a menu is open.
+**Corrected 2026-10-01 (stage 7.4):** the editor no longer places items from the cursor; it works slot first, so
+cancelling every click and drag does not conflict with editing, and nothing is ever left on a
+cursor to return (audit F5; see the note on #45).
 
 ### 81. Open menus are closed on disable
 **Old:** n/a.
@@ -1053,6 +1093,9 @@ explain itself in the same words. The reload condition is new: between the flush
 `replaceAll`, an accepted edit would be made against menus the load is about to replace. Nothing
 but commands can mutate today, so the edge covers every path. **Stage 8 must not bypass it:** an
 editor click is a mutation, and it needs the same three checks.
+**Corrected 2026-10-01 (stage 7.4):** the three checks now live in `MenuService`'s gate, and the command edge asks
+that gate instead of checking for itself (#96). The edge still refuses `joinmenu` and `edit` early.
+"Stage 8 must not bypass it" now means the editor calls `MenuService.gate()`.
 
 ### 89. Commands never open or close an inventory in the tick they run
 **Old:** 1.x opened inventories straight from its command handlers.
@@ -1063,6 +1106,13 @@ inside `InventoryClickEvent`, where rule 9 forbids opening or closing an invento
 cannot tell whether it was typed or clicked, so it always defers. The cost is one tick of delay
 and a result message that arrives after the command returns; in the gap, a click on a menu that
 is about to be deleted already fails the stale-view check.
+**Corrected 2026-10-01 (stage 7.4):** the original reason is gone. Since #94 action lists run on a scheduled task,
+not inside `InventoryClickEvent`. The deferral of `/mymenu open` and the other commands is kept. The
+reason it stays: other plugins may run `/mymenu open` from inside their own event handlers (a
+non-player character or sign plugin running a command on a click, for example), a command cannot tell what it was
+dispatched from, and opening a screen inside an event handler is what rule 9 forbids. Deferring
+always makes the command safe for them to call (confirmed by the user at the stage 7.4 review,
+2026-10-02).
 
 ### 90. `update` is registered and says it cannot check yet
 **Old:** 1.x had an update checker that downloaded and replaced the jar, and documented a
@@ -1129,6 +1179,120 @@ The command layer is also the only place a person can be told why a name was ref
 constructor can only throw. Every name a player can invent arrives through that one validator,
 so the reservation holds everywhere it matters. SPEC §3.2 stated the rule as a property of menu
 names, which was wrong, and is being corrected.
+
+### 94. Action lists start on the next tick; `MENU`, `BACK` and `CLOSE` then run in place
+**Old:** 1.x ran a click's commands from inside the click handler. Stage 6 did the same and
+deferred only `MENU`, `BACK` and `CLOSE` to the next tick (#38, SPEC rev 2 §9.3).
+**New:** `ActionExecutor.dispatch` runs inside `InventoryClickEvent` and does only the click's
+part, in #86's order: the pending check, the cooldown check and mark, and the click sound. It then
+schedules the list for the next tick and records the player as pending at that moment, in the
+existing `pending` map. A list with nothing executable in it (only `DELAY`s) is never scheduled.
+On the scheduled task the list runs in written order, and `MENU`, `BACK` and `CLOSE` act at once,
+with no further postponement. The walk is `ActionExecutor.Sequence.run`. The one place a `Sequence`
+is created hands it straight to the scheduler, so nothing can run a list from inside an event
+handler. The rest is unchanged: a throwing step stops the list and is logged, `DELAY` suspends and
+resumes, the list runs as captured at the click, and only a quit cancels it. Before each step the
+walk also stops if the player is no longer online, which covers a quit caused by an earlier step
+of the same list.
+**Why:** The ruling: action lists start on the next tick after the click, scheduled and counted
+as pending from then, so a quit cancels the list and a second click is refused. `MENU`, `BACK` and
+`CLOSE` then run in written order with no further postponement, which also fixes
+`[CLOSE, PLAYER warps]` closing the warps screen. This applies CLAUDE.md rule 9 as rewritten for
+this stage. Inside an event handler, do only what decides the event's outcome and the bookkeeping
+that belongs to that moment. Opening or closing a screen, or running actions or commands, is
+scheduled for the next tick. The audit (F2) found that a `PLAYER` action running another plugin's
+GUI command opened that GUI inside the click handler. The pending check, the cooldown and the
+sound stay in the handler because they are the outcome of the click, not actions. A click refused
+as pending still does not consume the cooldown. #89's deferral of `/mymenu open` and the other
+commands is kept (see the note on #89).
+**Cost:** every list starts one tick after its click. A `DOUBLE_CLICK` that reaches the server in
+the same tick as the `LEFT` before it is now refused as pending. Whether that happens with a real
+client is left for the client session (STAGE7.4-REPORT §5, Q2).
+
+### 95. `CLOSE` closes only the menu its list was acting on
+**Old:** 1.x closed the inventory before running any command (#55). Stage 6's `CLOSE` closed
+whatever the player had open on the next tick (audit F3).
+**New:** A list remembers the view session it was clicked in (`SessionManager.view` at click
+time). `CLOSE` closes the player's screen only when a MyMenu menu in view mode is open and
+`SessionManager.view` returns that same session object (`==`). When a `MENU` or `BACK` in the list
+opens a menu, the list's remembered session becomes the session that menu is now open in.
+Otherwise `CLOSE` does nothing: no message, no log line, and the rest of the list runs.
+**Why:** The ruling: `CLOSE` closes only a MyMenu menu in view mode, and only the menu that the
+action list was acting on, for that player. It never closes an editor screen, another plugin's
+screen or a vanilla screen. Menus the list itself moved to with `MENU` or `BACK` count. A menu the
+player opens themselves starts a new session and is never closed. This replaces the SPEC rev 2 §9
+row "Closes the menu". The session update after `MENU` and `BACK` is the filled-in detail
+confirmed by the user on 2026-09-30. SPEC §9.3 lets a delayed `MENU` open after the player closed
+the menu during the delay, and `SessionManager.navigate` then starts a new session. Without the
+update, a later `CLOSE` in the same list would not close the menu the list had just opened. In the
+ordinary case it is the same object and nothing changes.
+
+The prompt did not ask for the check that a view-mode `MenuHolder` is open; it was added to the
+identity comparison. `SessionManager.view` also returns a session during the one-tick swap marker
+after its menu opens (#77), even when another screen has already replaced it. In
+`[MENU b, PLAYER warps, CLOSE]`, identity alone would match and close the warps screen. The stage
+7.4 probe reproduced that window. Checking the open holder keeps the ruling's "never another
+plugin's screen" true during that tick. Confirmed by the user at the stage 7.4 review (2026-10-02). Making
+`SessionManager.view` itself ignore the marker while a foreign screen is open was weighed and left
+to stage 8, which redesigns session validity for the editor's screens.
+
+### 96. One refusal gate in `MenuService`, which owns the reload flag
+**Old:** 1.x had no degraded state and no reload gate. At stage 7 the reload check lived only in
+`CommandTree.refuseWhileLocked`. That check read `ReloadCommand::isRunning` and threw a Brigadier
+exception, and `MenuService` itself would accept a mutation mid-reload (#88, audit F4).
+**New:** `MenuService.gate()` is public and returns `Optional<Reason>`. It checks
+`RELOAD_RUNNING`, then `NOT_LOADED`, then `STORAGE_DEGRADED`, in the order the command edge used.
+Every mutator asks it first, before computing anything. `CommandTree.refuseWhileLocked` asks the
+same gate and turns a refusal into its `CommandSyntaxException`. So `joinmenu` and `edit`, which
+never reach `MenuService`, are refused in the same words. All refusal wording comes from
+`Replies.refusal`, and the reload message is unchanged. The reload flag moved from `ReloadCommand`
+into `MenuService` (`beginReload`, `endReload`). `ReloadCommand` lowers it first thing in the
+completion stage at the end of its future chain, which runs whether the chain completed normally
+or exceptionally. A `catch` around building the chain lowers it too.
+**Why:** The ruling: all three refusal checks go in `MenuService`'s one gate, which returns a
+reason. The command layer adapts it and the editor will call it, and stage 7.9 adds the per-menu
+unreadable check to the same gate. The flag sits in the service, rather than the gate reading it
+from `ReloadCommand`, so the gate depends on nothing above it and the editor needs only the
+service. The other way would need a supplier wired in after construction, because `MenuService` is
+built before `ReloadCommand` and is one of its arguments. The reload's own steps never pass through
+the gate: the flush and the retry go to storage, and `replaceAll` is the load and is not gated. A
+flag left up would refuse every edit until restart, so every exit path that could be provoked was
+exercised at runtime; the two that could not (an exception while reporting a failure, and one while
+building the chain) end in the same completion stage or `catch` (STAGE7.4-REPORT §5, Q1).
+
+### 97. The total-delay cap is enforced when a change is made, on the lists it touches
+**Old:** 1.x had no delays.
+**New:** `MenuService.update` refuses a change when a list it touches adds up to more than
+`actions.maxTotalDelaySeconds`. A list is touched when it differs from the list at the same slot
+and click key in the current menu, and a slot new to the menu counts. Lists the change leaves equal
+are never judged, so lowering the cap never blocks an unrelated edit. The refusal names the first
+over-cap list, by slot and then click key, with its total and the limit, and the reply gives both
+in seconds. `MenuService` receives the cap through `MyMenu.applyConfig`, next to `ActionParser`'s
+copy, so both follow a reload. Loading is unchanged: the parser still clamps an over-cap stored
+list with a warning (SPEC §9.2), and the model records do not check the cap.
+**Why:** The ruling: `MenuService`'s gate refuses any change whose action lists exceed the
+total-delay cap. It checks only the lists that change touches, and the reason names the total and
+the limit. Loading stays capped by the parser. The model records do not enforce the cap: they would
+need the config value, and a lowered cap would break loading. The audit (F18) found that
+`ActionParser.read` applies no cap, so an editor that built a list one entry at a time would store
+an uncapped total. The refusal also carries the slot and click key. The ruling does not require
+them, but a change can touch several lists, and without them the reply could not say which one is
+over.
+
+### 98. Refusal reasons are a sealed type: plain constants, plus records for the two that carry detail
+**Old:** n/a.
+**New:** `MutationResult.Reason` is a sealed interface. The constants of `Reason.Plain`
+(`NOT_LOADED`, `RELOAD_RUNNING`, `STORAGE_DEGRADED`, `NO_SUCH_MENU`, `MENU_EXISTS`) are the reasons
+with nothing to add. The two that must name something are records:
+`ItemsOutsideLayout(slots)`, which replaces the `ITEMS_OUTSIDE_LAYOUT` constant, and
+`DelayOverCap(slot, key, totalTicks, limitSeconds)`. `MutationResult` itself is unchanged, still
+`Applied` or `Refused`, so every exhaustive switch over it compiles as before. `Replies.refusal`
+switches over all reasons, and the compiler checks that none is missed.
+**Why:** SPEC §8.4.1 requires a refused shrink to name the offending slots (audit F9), and #97's
+refusal must carry a total and a limit. Optional detail fields on `Refused` would let any refusal
+carry slots it has no business having. New top-level cases of `MutationResult` would break the
+subcommands' exhaustive switches. A sealed `Reason` puts the detail exactly on the reasons that have
+it.
 
 ---
 

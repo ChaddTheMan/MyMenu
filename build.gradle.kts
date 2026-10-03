@@ -11,8 +11,9 @@ group = "me.chaddtheman"
 version = "2.0.0"
 description = "Interactive chest-inventory menus, configured entirely in game."
 
-// Paper publishes stable builds as <mc>.build.<n>-stable. 26.3 exists but is alpha-only as
-// of 2026-09-18; see DECISIONS.md #58.
+// Paper publishes stable builds as <mc>.build.<n>-stable. 26.3 went stable on 2026-09-20, but the
+// project stays on 26.2 until stage 8 is finished, then moves to the latest stable Paper release;
+// see DECISIONS.md #58.
 val minecraftVersion = "26.2"
 val paperApiVersion = "26.2.build.124-stable"
 

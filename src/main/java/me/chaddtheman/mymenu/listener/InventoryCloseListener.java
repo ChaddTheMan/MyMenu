@@ -31,8 +31,9 @@ import java.util.Objects;
  * Hands closes of menu inventories to the session manager, reason attached. The branching on
  * the reason lives there, next to the validity rules it interacts with.
  *
- * <p>The cursor is not handled here. Every click and drag in a menu is cancelled, so the cursor
- * can only hold what the player brought, and the server returns that to them on close.
+ * <p>The cursor is not handled here because it can never hold anything in a MyMenu screen. Every
+ * click and drag is cancelled, in view mode and edit mode alike, and nothing is ever placed from
+ * the cursor, because the editor works slot first. So there is nothing to return on close.
  */
 public final class InventoryCloseListener implements Listener {
 

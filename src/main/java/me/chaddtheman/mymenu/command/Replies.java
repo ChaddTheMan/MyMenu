@@ -18,9 +18,16 @@
 package me.chaddtheman.mymenu.command;
 
 import me.chaddtheman.mymenu.service.MutationResult;
+import me.chaddtheman.mymenu.service.MutationResult.Reason.DelayOverCap;
+import me.chaddtheman.mymenu.service.MutationResult.Reason.ItemsOutsideLayout;
+import me.chaddtheman.mymenu.service.MutationResult.Reason.Plain;
 import net.kyori.adventure.audience.Audience;
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.format.NamedTextColor;
+
+import java.math.BigDecimal;
+import java.util.List;
+import java.util.stream.Collectors;
 
 /**
  * Command feedback. TODO(stage 10): every string here and in the subcommands moves to
@@ -51,14 +58,36 @@ final class Replies {
         to.sendMessage(Component.text(text, NamedTextColor.RED));
     }
 
-    /** Why {@code MenuService} refused, in words; SPEC §12 requires every refusal to say. */
+    /**
+     * Why {@code MenuService} refused, in words; SPEC §12 requires every refusal to say. The one
+     * place refusal wording lives: the command edge and the subcommands both come here.
+     */
     static String refusal(MutationResult.Reason reason, String menuName) {
         return switch (reason) {
-            case NOT_LOADED -> "Menus have not finished loading, so nothing can be changed yet.";
-            case STORAGE_DEGRADED -> DEGRADED;
-            case NO_SUCH_MENU -> "There is no menu named '" + menuName + "'.";
-            case MENU_EXISTS -> "A menu named '" + menuName + "' already exists.";
-            case ITEMS_OUTSIDE_LAYOUT -> "That would leave items outside menu '" + menuName + "'.";
+            case Plain.RELOAD_RUNNING -> "A reload is running; try again when it has finished.";
+            case Plain.NOT_LOADED -> "Menus have not finished loading, so nothing can be changed yet.";
+            case Plain.STORAGE_DEGRADED -> DEGRADED;
+            case Plain.NO_SUCH_MENU -> "There is no menu named '" + menuName + "'.";
+            case Plain.MENU_EXISTS -> "A menu named '" + menuName + "' already exists.";
+            case ItemsOutsideLayout outside -> "That would leave items outside menu '" + menuName + "', in "
+                    + slots(outside.slots()) + ". Move or remove them first.";
+            case DelayOverCap over -> "The " + over.key() + " actions on slot " + over.slot() + " of menu '" + menuName
+                    + "' would pause for " + seconds(over.totalTicks()) + " seconds in total; the limit is "
+                    + over.limitSeconds() + " seconds.";
         };
+    }
+
+    /** "slot 4", "slots 4 and 7", "slots 4, 7 and 8": SPEC counts slots from 0, and so does this. */
+    private static String slots(List<Integer> slots) {
+        if (slots.size() == 1) {
+            return "slot " + slots.getFirst();
+        }
+        String head = slots.subList(0, slots.size() - 1).stream().map(String::valueOf).collect(Collectors.joining(", "));
+        return "slots " + head + " and " + slots.getLast();
+    }
+
+    // A tick is a twentieth of a second, so the division is exact in decimal: 610 ticks is 30.5.
+    private static String seconds(long ticks) {
+        return BigDecimal.valueOf(ticks).divide(BigDecimal.valueOf(20)).stripTrailingZeros().toPlainString();
     }
 }

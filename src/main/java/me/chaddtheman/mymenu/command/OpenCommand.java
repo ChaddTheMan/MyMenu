@@ -39,9 +39,10 @@ import java.util.Objects;
  *
  * <h2>Why the open waits a tick</h2>
  *
- * A menu item can run {@code /mymenu open other} as a player command, and actions run inside
- * {@code InventoryClickEvent}, where opening an inventory is not allowed (CLAUDE.md, rule 9).
- * The command cannot tell how it was invoked, so it always defers.
+ * Every screen a command opens or closes waits for the next tick (DECISIONS #89). The rule was made
+ * while a menu item's {@code /mymenu open other} ran inside {@code InventoryClickEvent}; since stage
+ * 7.4 action lists run on a scheduled task, so that reason is gone, but the deferral is kept. The
+ * command cannot tell what it was dispatched from, so it always defers.
  */
 public final class OpenCommand {
 

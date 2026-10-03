@@ -30,7 +30,7 @@ Sharing one inventory makes four things impossible:
 MenuService ──gates mutations──> MenuRegistry ──owns──> Menu (model)
                                                           ├── MenuItem[] by slot
                                                           │    ├── ItemTemplate (incl. glow)
-                                                          │    ├── Map<ClickType, List<Action>>
+                                                          │    ├── Map<ClickKey, List<Action>>
                                                           │    └── view permission,
                                                           │        cooldown, sound
                                                           ├── BoundItem + MatchMode
@@ -50,15 +50,20 @@ Root package: `me.chaddtheman.mymenu`
 ```
 me.chaddtheman.mymenu
 ├── MyMenu.java                  plugin entry point
-├── model/                       Menu, MenuItem, ItemTemplate, MenuType, MatchMode
-├── service/                     MenuService, MenuRegistry, CooldownStore
-├── action/                      Action, ActionType, ActionParser, ActionExecutor
+├── model/                       Menu, MenuItem, ItemTemplate, MenuType, MatchMode,
+│                                BoundItem, ClickKey, VersionedMenu
+├── service/                     MenuService, MenuRegistry, CooldownStore,
+│                                MenuPersistence, MutationResult
+├── action/                      Action, ActionType, ActionParser, ActionExecutor,
+│                                ActionTextResolver, CommandSanitiser
 ├── render/                      MenuRenderer, MenuHolder, ViewMode, ItemBuilder,
 │                                TokenReplacer (the stage 9 seam)
 ├── session/                     ViewSession, EditSession, SessionManager, NavigationStack
 ├── storage/                     MenuStorage, YamlMenuStorage, MySqlMenuStorage,
-│                                ItemSerializer, BackupWriter
-├── command/                     CommandTree (Brigadier), subcommand classes
+│                                ItemSerializer, BackupWriter, DebouncedMenuWriter,
+│                                MenuYamlFormat, ActionCodec
+├── command/                     CommandTree (Brigadier), CommandSpec, Replies,
+│                                subcommand classes
 ├── listener/                    inventory and player listeners
 ├── text/                        TextService (colour, wildcards, PlaceholderAPI bridge)
 ├── config/                      PluginConfig, MessageService
@@ -333,10 +338,18 @@ at the input boundary.
   entity handle.
 - One pending sequence **per player**. A click while one is pending is ignored.
 - Logout cancels pending sequences. Death and world change do not.
-- Total delay is validated at parse time and clamped with a warning, not at run time.
+- Total delay is clamped with a warning when a menu loads (parse time), and a change that would
+  exceed it is refused when it is made (§7.1, DECISIONS #97). It is never checked at run time.
 
-**`MENU`, `BACK`, and `CLOSE` are scheduled for the next tick.** Opening or closing an
-inventory from inside `InventoryClickEvent` is unsupported and misbehaves.
+**The whole list is scheduled for the next tick** (DECISIONS #94). An event handler does only
+what decides the event's outcome, plus the bookkeeping that belongs to that moment; opening or
+closing a screen, or running actions or commands, is scheduled for the next tick (CLAUDE.md,
+rule 9). So the click handler's part is the click itself: the pending check, the cooldown and the
+sound. It then schedules the list and marks the player pending at once, so a second click in the
+same tick is refused and a quit before the tick cancels the list. On the scheduled task, `MENU`,
+`BACK` and `CLOSE` run in place, in written order. The list-walking code can be reached only from
+that task. An earlier revision of this section deferred only `MENU`, `BACK` and `CLOSE`, which left
+other plugins' commands running inside the click handler.
 
 `PLAYER` dispatches via `Player#performCommand`. `PLAYER_ELEVATED` uses a temporary
 `PermissionAttachment` removed in a `finally` block. Opping and de-opping is forbidden: an
@@ -349,6 +362,8 @@ exception between the two leaves a player opped.
 ```java
 public interface MenuStorage {
     CompletableFuture<Collection<Menu>> loadAll();
+    CompletableFuture<Void> retryUnwritten();       // reload: write again what a failed write left
+    CompletableFuture<Boolean> discardUnwritten();  // reload's discard form (DECISIONS #71)
     CompletableFuture<Void> saveAll(Collection<Menu> menus);   // add or replace by name
     CompletableFuture<Void> delete(Menu menu);
     boolean isDegraded();
@@ -399,6 +414,15 @@ created on first connect and tracked in a `schema_version` table. Single-writer 
 
 Set by a load-time parse failure or a runtime write failure. Storage reports the condition;
 **`MenuService` enforces it, refusing mutations before they reach the model.**
+
+It does so through **one gate**, `MenuService.gate()`, which also refuses while menus have not
+finished loading and while a reload is running (DECISIONS #96). All three mean that an edit
+accepted now would be lost. Every mutator asks the gate before it computes anything. Callers
+outside, the command edge now and the editor later, ask the same gate for an early refusal in the
+same words, and none checks for itself. The reload flag belongs to `MenuService`, and the reload
+lowers it however it ends. `MenuService` also refuses a change whose touched action lists exceed
+the total-delay cap (DECISIONS #97). That check needs the changed menu, so it runs after the change
+is computed and before anything is committed.
 
 An earlier draft enforced it in storage. That is too late: the model has already changed,
 so the edit lives in memory until the next reload silently throws it away — the exact
@@ -521,6 +545,11 @@ suggestions off the main thread, the `<menu>` provider would read a main-thread-
 registry. Immutable models plus copy-on-write publication through a volatile field
 (§3.1) make that safe regardless of which thread Paper uses.
 
+**Mutating commands are refused at the edge through `MenuService`'s gate** (§7.1). The tree asks
+the gate before a mutating subcommand runs and turns a refusal into Brigadier's failure message.
+It checks nothing itself, so the edge and the service cannot disagree. This is what refuses
+`joinmenu` and `edit`, which never reach the service; for the rest, the service asks again.
+
 Help text is **generated from the subcommand registry**. 1.x had 14 KB of hand-maintained
 help that had already drifted: it documented `/mmupdate`, which never existed, and
 described `null`/`unset` for unbinding when the code accepted `none`/`null`.
@@ -533,11 +562,20 @@ described `null`/`unset` for unbinding when the code accepted `none`/`null`.
 |---|---|
 | `InventoryClickListener` | Cancel all clicks; revision check; dispatch by click type |
 | `InventoryDragListener` | Cancel drags across menu slots |
-| `InventoryCloseListener` | Reason-aware session handling; return cursor items |
+| `InventoryCloseListener` | Reason-aware session handling |
 | `AsyncChatListener` | Editor text input: cancel the message, hop to the main thread |
 | `PlayerInteractListener` | Bound-item detection and menu opening |
 | `PlayerJoinListener` | `joinMenu`, `giveItemOnJoin`, update notification |
 | `PlayerQuitListener` | Session cleanup |
+
+**Listeners decide; they do not act.** Inside an event handler a listener does only what decides
+the event's outcome (cancel or allow, and the checks that decide it) and the bookkeeping that
+belongs to that moment (session state on close, cleanup on quit). Opening or closing a screen, or
+running actions or commands, is scheduled for the next tick (CLAUDE.md, rule 9). A click's action
+list is therefore scheduled by `ActionExecutor`, not run in the click handler (§6), and a stale
+view is redrawn a tick later. One handler does not follow this yet: as of stage 7.4,
+`PlayerInteractListener` opens a bound item's menu inside the interact event. Stage 7.45 moves
+that open to the next tick.
 
 **Listeners hold no per-event state in fields.** 1.x stored the event player, inventory,
 and slot as instance fields on singleton listeners, then used `this.player` inside a

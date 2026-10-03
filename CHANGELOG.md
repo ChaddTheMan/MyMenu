@@ -25,7 +25,8 @@ internal class names, no package paths, no implementation detail.
   cause cannot be fixed and an ordinary reload would refuse.
 - Two new settings: how many menus deep one menu may open another, and the longest a click's
   delays may add up to.
-- Menus cannot be named `none`, because the join menu command uses that word to mean "no menu".
+- `/mymenu create` refuses the name `none`, because the join menu command uses that word to
+  mean "no menu".
 
 ### Changed
 
@@ -35,6 +36,13 @@ internal class names, no package paths, no implementation detail.
   warns if it was the join menu.
 
 ### Fixed
+
+- Items handed out with `/mymenu give` stop opening their menu once `/mymenu unset` removes its
+  bound item.
+- A Close action only ever closes the menu its click came from, never another plugin's screen or
+  a chest the player opened in the meantime.
+- Commands run by a menu click now start just after the click rather than during it, so a command
+  that opens another plugin's screen no longer runs in the middle of the click.
 
 ---
 
@@ -73,8 +81,6 @@ plugin that happens to share a name.
 - Item names and lore are no longer shown in italics unless the text asks for it
 - An item that can no longer be loaded shows as a barrier instead of breaking the menu, and the
   server log names the menu and slot
-- Menu items are placed by dragging a real item into the slot, rather than typing a
-  material name
 - Statistics now use bStats; the old MCStats service no longer exists
 - The update checker reports new versions and no longer downloads or installs anything
 

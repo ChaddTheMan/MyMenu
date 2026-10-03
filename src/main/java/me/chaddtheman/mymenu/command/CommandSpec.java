@@ -24,14 +24,15 @@ import java.util.Objects;
 
 /**
  * What the tree and the help pages need to know about one subcommand. The tree gates the node
- * with {@link #permissions}, refuses {@link #mutating} commands while storage is degraded, and
- * help prints {@link #description} beside a usage line generated from the built node, so none of
+ * with {@link #permissions}, refuses {@link #mutating} commands while {@code MenuService}'s gate is
+ * shut, and help prints {@link #description} beside a usage line generated from the built node, so none of
  * the three can drift from the others.
  *
  * @param permissions any one of these lets a sender see and use the subcommand; the first is
  *                    the one help names
  * @param playerOnly every form needs a player to act on; the tree refuses others politely
- * @param mutating refused while storage is degraded or a reload is running (SPEC §12)
+ * @param mutating refused while menu storage is degraded, while menus have not finished loading,
+ *                 and while a reload is running (SPEC §12)
  */
 public record CommandSpec(String name, List<String> permissions, String description, boolean playerOnly,
                           boolean mutating) {

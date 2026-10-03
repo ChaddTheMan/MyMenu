@@ -77,8 +77,17 @@ import java.util.function.Consumer;
  * {@code onEnable} uses. The storage backend is not switched: a changed {@code storage.type} is
  * reported and needs a restart.
  *
- * <p>While the chain runs, the command tree refuses mutating commands. A change accepted in the
- * gap would be made against a menu the load is about to replace.
+ * <h2>The reload flag, and why it always comes down</h2>
+ *
+ * While the chain runs, {@code MenuService}'s gate refuses every mutation, from commands and later
+ * from the editor alike. A change accepted in the gap would be made against a menu the load is
+ * about to replace. The flag belongs to the service, not to this class, so the gate reads nothing
+ * from the command layer. This class raises it and must lower it on every way the reload can end:
+ * success, a refusal over unwritten changes, the discard form, a failed load, or an exception at any
+ * step. One completion stage at the end of the chain lowers it, and a completion stage runs whether
+ * the chain completed normally or exceptionally, so no step can skip it. If building the chain itself
+ * throws, the flag is lowered before the exception leaves. A flag left up would refuse every edit
+ * until restart, the shape of 1.x's lockout.
  */
 public final class ReloadCommand {
 
@@ -104,9 +113,6 @@ public final class ReloadCommand {
     private final AtomicReference<PluginConfig> config;
     private final Consumer<PluginConfig> applyConfig;
 
-    // Main thread only.
-    private boolean running;
-
     public ReloadCommand(Plugin plugin, Executor mainThread, MenuStorage storage, DebouncedMenuWriter writer,
                          MenuService menus, SessionManager sessions, ActionExecutor executor,
                          AtomicReference<PluginConfig> config, Consumer<PluginConfig> applyConfig) {
@@ -123,25 +129,25 @@ public final class ReloadCommand {
         this.applyConfig = Objects.requireNonNull(applyConfig, "applyConfig");
     }
 
-    /** True from the moment a reload starts until it has finished or failed. Main thread. */
-    public boolean isRunning() {
-        return running;
-    }
-
     public void execute(CommandSender sender, boolean discard) {
-        if (running) {
+        if (!menus.beginReload()) {
             Replies.error(sender, "A reload is already running.");
             return;
         }
-        running = true;
-        CompletableFuture.supplyAsync(() -> PluginConfig.load(dataDirectory, logger))
-                .thenComposeAsync(fresh -> reload(sender, fresh, discard), mainThread)
-                .whenCompleteAsync((ignored, failure) -> {
-                    running = false;
-                    if (failure != null) {
-                        refused(sender, unwrap(failure));
-                    }
-                }, mainThread);
+        try {
+            CompletableFuture.supplyAsync(() -> PluginConfig.load(dataDirectory, logger))
+                    .thenComposeAsync(fresh -> reload(sender, fresh, discard), mainThread)
+                    .whenCompleteAsync((ignored, failure) -> {
+                        // First, so nothing below can keep the gate shut.
+                        menus.endReload();
+                        if (failure != null) {
+                            refused(sender, unwrap(failure));
+                        }
+                    }, mainThread);
+        } catch (RuntimeException e) {
+            menus.endReload();
+            throw e;
+        }
     }
 
     // Main thread.

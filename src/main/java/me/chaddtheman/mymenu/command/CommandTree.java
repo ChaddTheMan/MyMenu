@@ -53,7 +53,6 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
-import java.util.function.BooleanSupplier;
 import java.util.function.Predicate;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
@@ -72,8 +71,9 @@ import java.util.stream.Stream;
  *
  * <p>Three checks run in the {@code executes} wrapper rather than in {@code requires}, because a
  * sender who fails them should be told why rather than see "unknown command": a form that needs
- * a player run from the console, a mutating command while storage is degraded or a reload runs
- * (SPEC §12), and the {@code open <menu>} form for a sender who may only open for others.
+ * a player run from the console, a mutating command while {@code MenuService}'s gate is shut
+ * (storage degraded, menus not loaded yet, or a reload running; SPEC §12), and the
+ * {@code open <menu>} form for a sender who may only open for others.
  *
  * <h2>Registration runs more than once</h2>
  *
@@ -113,16 +113,14 @@ public final class CommandTree {
 
     private final Logger logger;
     private final MenuService menus;
-    private final BooleanSupplier reloading;
     private final Subcommands subs;
 
     // Replaced on each registration; help reads the usage lines from it.
     private volatile Map<String, CommandNode<CommandSourceStack>> nodes = Map.of();
 
-    public CommandTree(Logger logger, MenuService menus, BooleanSupplier reloading, Subcommands subs) {
+    public CommandTree(Logger logger, MenuService menus, Subcommands subs) {
         this.logger = Objects.requireNonNull(logger, "logger");
         this.menus = Objects.requireNonNull(menus, "menus");
-        this.reloading = Objects.requireNonNull(reloading, "reloading");
         this.subs = Objects.requireNonNull(subs, "subs");
     }
 
@@ -329,15 +327,15 @@ public final class CommandTree {
         };
     }
 
+    /**
+     * Asks {@code MenuService}'s gate and decides nothing itself, so the edge and the service cannot
+     * disagree about when editing is locked. The service asks again for every mutation it receives;
+     * this early ask is what covers {@code joinmenu} and {@code edit}, which never reach it.
+     */
     private void refuseWhileLocked() throws CommandSyntaxException {
-        if (reloading.getAsBoolean()) {
-            throw fail("A reload is running; try again when it has finished.");
-        }
-        if (!menus.isLoaded()) {
-            throw fail(Replies.refusal(MutationResult.Reason.NOT_LOADED, ""));
-        }
-        if (menus.isDegraded()) {
-            throw fail(Replies.DEGRADED);
+        Optional<MutationResult.Reason> locked = menus.gate();
+        if (locked.isPresent()) {
+            throw fail(Replies.refusal(locked.get(), ""));
         }
     }
 
