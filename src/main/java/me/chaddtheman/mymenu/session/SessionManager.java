@@ -83,7 +83,10 @@ public final class SessionManager {
         NO_SUCH_MENU,
         /** Another plugin cancelled the open; the player is left with no menu open. */
         CANCELLED,
-        /** {@code back} with nothing to go back to; the menu was closed instead. */
+        /**
+         * {@code back} found nothing to go back to. Nothing was opened or closed; whether to close is the
+         * caller's decision (DECISIONS #100).
+         */
         NO_HISTORY
     }
 
@@ -161,7 +164,12 @@ public final class SessionManager {
         return openView(player, found.get(), current.get());
     }
 
-    /** Returns to the previous menu. A menu deleted since it was visited is skipped over. */
+    /**
+     * Returns to the previous menu. A menu deleted since it was visited is skipped over. With nothing
+     * to return to, including when every entry was skipped, it reports {@code NO_HISTORY} and leaves
+     * the screen alone: only the caller knows which menu it was acting on, so only the caller can tell
+     * whether the screen open now is one it may close.
+     */
     public OpenResult back(Player player) {
         Optional<ViewSession> current = view(player);
         if (current.isEmpty()) {
@@ -174,7 +182,6 @@ public final class SessionManager {
                 return openView(player, found.get(), current.get());
             }
         }
-        player.closeInventory();
         return OpenResult.NO_HISTORY;
     }
 

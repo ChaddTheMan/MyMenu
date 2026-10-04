@@ -43,6 +43,9 @@ internal class names, no package paths, no implementation detail.
   a chest the player opened in the meantime.
 - Commands run by a menu click now start just after the click rather than during it, so a command
   that opens another plugin's screen no longer runs in the middle of the click.
+- Using a menu's item no longer replaces a screen that another plugin opened for the same click.
+- A Back action with nowhere to go back to closes only the menu its click came from, never another
+  plugin's screen.
 
 ---
 

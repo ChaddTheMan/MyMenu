@@ -23,9 +23,7 @@ import me.chaddtheman.mymenu.model.ItemTemplate;
 import me.chaddtheman.mymenu.model.Menu;
 import me.chaddtheman.mymenu.render.ItemBuilder;
 import me.chaddtheman.mymenu.render.TokenReplacer;
-import me.chaddtheman.mymenu.render.ViewMode;
 import me.chaddtheman.mymenu.service.MenuRegistry;
-import me.chaddtheman.mymenu.session.SessionManager;
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.serializer.plain.PlainTextComponentSerializer;
 import org.bukkit.NamespacedKey;
@@ -45,7 +43,9 @@ import java.util.Objects;
 import java.util.Set;
 
 /**
- * Opens a menu when a player clicks with its bound item in the main hand.
+ * Decides whether a click with the item in the main hand is a bound item's click, and if so cancels
+ * it and asks {@link BoundItemOpener} for the menu. The listener does not open anything itself: the
+ * menu opens a tick later, and the opener's header explains why.
  *
  * <h2>Tag first, then the configured mode</h2>
  *
@@ -79,18 +79,18 @@ public final class PlayerInteractListener implements Listener {
 
     private final NamespacedKey boundItemKey;
     private final MenuRegistry registry;
-    private final SessionManager sessions;
+    private final BoundItemOpener opener;
     private final ItemBuilder items;
     private final Logger logger;
 
     // Bound items that failed to build, logged once each. A cache, not per-event state.
     private final Set<String> reportedUnreadable = new HashSet<>();
 
-    public PlayerInteractListener(Plugin plugin, MenuRegistry registry, SessionManager sessions,
+    public PlayerInteractListener(Plugin plugin, MenuRegistry registry, BoundItemOpener opener,
                                   ItemBuilder items, Logger logger) {
         this.boundItemKey = new NamespacedKey(plugin, "bound_item");
         this.registry = Objects.requireNonNull(registry, "registry");
-        this.sessions = Objects.requireNonNull(sessions, "sessions");
+        this.opener = Objects.requireNonNull(opener, "opener");
         this.items = Objects.requireNonNull(items, "items");
         this.logger = Objects.requireNonNull(logger, "logger");
     }
@@ -116,8 +116,10 @@ public final class PlayerInteractListener implements Listener {
         if (menuName == null) {
             return;
         }
+        // Cancelled even when the opener already has an open pending: a click that fires two events
+        // would otherwise place, eat or shear on the second one.
         event.setCancelled(true);
-        sessions.open(event.getPlayer(), menuName, ViewMode.VIEW);
+        opener.request(event.getPlayer(), menuName);
     }
 
     private @Nullable String match(ItemStack held) {

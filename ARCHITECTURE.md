@@ -564,7 +564,7 @@ described `null`/`unset` for unbinding when the code accepted `none`/`null`.
 | `InventoryDragListener` | Cancel drags across menu slots |
 | `InventoryCloseListener` | Reason-aware session handling |
 | `AsyncChatListener` | Editor text input: cancel the message, hop to the main thread |
-| `PlayerInteractListener` | Bound-item detection and menu opening |
+| `PlayerInteractListener` | Bound-item detection and cancelling; hands the open to `BoundItemOpener` |
 | `PlayerJoinListener` | `joinMenu`, `giveItemOnJoin`, update notification |
 | `PlayerQuitListener` | Session cleanup |
 
@@ -572,10 +572,9 @@ described `null`/`unset` for unbinding when the code accepted `none`/`null`.
 the event's outcome (cancel or allow, and the checks that decide it) and the bookkeeping that
 belongs to that moment (session state on close, cleanup on quit). Opening or closing a screen, or
 running actions or commands, is scheduled for the next tick (CLAUDE.md, rule 9). A click's action
-list is therefore scheduled by `ActionExecutor`, not run in the click handler (§6), and a stale
-view is redrawn a tick later. One handler does not follow this yet: as of stage 7.4,
-`PlayerInteractListener` opens a bound item's menu inside the interact event. Stage 7.45 moves
-that open to the next tick.
+list is therefore scheduled by `ActionExecutor`, not run in the click handler (§6), a stale
+view is redrawn a tick later, and a bound item's menu is opened a tick later by `BoundItemOpener`.
+No handler is an exception.
 
 **Listeners hold no per-event state in fields.** 1.x stored the event player, inventory,
 and slot as instance fields on singleton listeners, then used `this.player` inside a
@@ -589,8 +588,15 @@ message.
 the executor because a sequence must survive death, and death ends the session, so the two must
 not be coupled; the class that owns the state owns its cleanup (DECISIONS #84).
 
-Bound-item interaction fires once per hand; only the main hand is handled, and the event
-is cancelled. Both left- and right-click open a menu, matching 1.x.
+Bound-item interaction fires once per hand; only the main hand is handled. Both left- and
+right-click open a menu, matching 1.x. The listener decides inside the event: it matches the
+item and cancels every matching event. It then calls `BoundItemOpener.request`, which is not a
+listener and is the one path by which a bound item opens its menu; stage 7.5's entity events
+call the same method. The opener keeps at most one open pending per player, because one physical
+click can fire more than one interact event, and the first request wins. On the next tick it
+clears that entry first, looks the player up by UUID, and opens the menu only if the player is
+online and has no screen open but their own inventory. A screen opened by then means something
+else answered the click, and the open is dropped without a message (DECISIONS #99).
 
 Click handling must account for types that did not exist in 1.8: off-hand swap,
 number-key hotbar swap, double-click collection, and drag events. Cancel first, interpret

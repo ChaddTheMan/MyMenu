@@ -4,7 +4,8 @@
 **License:** GPL-3.0
 **Repository:** https://github.com/ChaddTheMan/MyMenu
 **Predecessor:** MyMenu 1.0.4.3 (BukkitDev, January 2015, Minecraft 1.8.1)
-**Revision:** 2 — incorporates `AUDIT.md` findings
+**Revision:** 2 — incorporates `AUDIT.md` findings. Amended 2026-10-03 at the stage 7.45 review
+where later settled rulings contradicted it (§9, §9.2, §9.3, §12, §15.1; DECISIONS #94–#100)
 
 This document describes *what* the plugin does. `ARCHITECTURE.md` describes *how* it is
 built. `DECISIONS.md` records *why* things differ from 1.0.4.3.
@@ -515,7 +516,7 @@ invalidate their own next click.
 | `MESSAGE` | `value` | Sends the player a message |
 | `MENU` | `value` | Opens another menu |
 | `BACK` | — | Returns to the previous menu in the navigation stack |
-| `CLOSE` | — | Closes the menu |
+| `CLOSE` | — | Closes the menu its list was acting on (§9.3) |
 | `DELAY` | `ticks` | Pauses before the next action in the list |
 
 `PLAYER` actions dispatch through `Player#performCommand`, which does not fire the
@@ -532,7 +533,9 @@ never opped, at any point, for any reason.**
 A list containing a `DELAY` suspends and resumes on a later tick.
 
 - Total delay per list is capped by `actions.maxTotalDelaySeconds` (default 30). Stored
-  lists exceeding the cap are **clamped with a warning**, never rejected.
+  lists exceeding the cap are **clamped with a warning**, never rejected. A change made in game
+  that would push a list over the cap is **refused**, naming the total and the limit. Only the
+  lists that change touches are checked, so lowering the cap never blocks unrelated edits.
 - A sequence ends as soon as nothing executable remains, so a trailing `DELAY` does not hold the
   player pending with nothing to run. A trailing delay would otherwise work as a crude
   per-player lockout; cooldowns are the supported mechanism for that, and leaning on delays
@@ -548,7 +551,8 @@ inventory and ends the session, but must not cancel a running sequence. Hanging 
 off the session would silently break this rule. (World change turns out not to close an
 inventory at all: `InventoryCloseEvent.Reason.TELEPORT` is deprecated and never fires on 26.2.)
 - Only one sequence runs **per player** at a time. A click while one is pending is
-  ignored.
+  ignored. A list counts as pending from the click itself, not from its first step, so a
+  second click in the same tick is ignored too and a quit before the list starts cancels it.
 
 ### 9.3 Navigation
 
@@ -556,18 +560,30 @@ A per-player navigation stack.
 
 - `MENU` **pushes**, even if the target is already in the stack. It works after a delay
   even if the player closed the menu.
-- `BACK` pops one entry. With an empty stack it **closes the menu and ends the session**. A
-  back control that visibly does nothing reads as broken, and closing is the natural meaning of
-  "back" from the first screen; it also gives admins a close control for free. `BACK` skips
-  entries whose menu has since been deleted.
+- `BACK` pops one entry and returns to that menu, skipping entries whose menu has since been
+  deleted. With nothing to return to, it **closes the menu under exactly `CLOSE`'s conditions**
+  (below): `BACK` on the first menu of a session closes that menu, but it never closes another
+  plugin's screen or a menu the player opened themselves. A back control that visibly does
+  nothing reads as broken, and closing is the natural meaning of "back" from the first screen;
+  it also gives admins a close control for free.
+- `CLOSE` closes **only the menu its list was acting on**: a MyMenu menu in view mode, in the
+  session the list started in, or the session a `MENU` or `BACK` earlier in the same list moved
+  it to. If the player has since closed that menu, or has another menu, another plugin's screen
+  or a container open, `CLOSE` does nothing, says nothing, and the rest of the list runs. A menu
+  the player opens themselves (bound item, command, join) always starts a new session, so an
+  older list never closes it.
 - Depth is capped by `navigation.maxDepth` (default 10), **clamped to 1–32 when read**.
   Exceeding it refuses the action and logs a warning. The 32 is the navigation stack's own hard
   ceiling: clamping to it keeps that an enforced invariant rather than something that silently
   starts dropping history if an admin sets a larger value.
 - Closing a menu outright clears the stack.
 
-`MENU`, `BACK`, and `CLOSE` are scheduled for the next tick, because opening or closing
-an inventory from inside a click handler is not supported.
+**Every action list starts on the tick after the click**, never inside the click handler:
+running a command or opening a screen mid-click is unsafe, and waiting lets other plugins finish
+reacting to the click first. From then the list runs in written order, and `MENU`, `BACK` and
+`CLOSE` act at once when reached, with no further postponement. So `[CLOSE, PLAYER warps]` closes
+the menu and then opens the warps screen, which stays open. The click sound still plays at the
+click.
 
 ---
 
@@ -741,6 +757,10 @@ While degraded:
 4. Every refused command explains why.
 5. `/mymenu reload` re-checks and clears the state if the data now loads and writes.
 
+Mutations are also refused **while menus are still loading** at startup and **while a reload is
+running**, with the same kind of explanation. Every path that changes a menu, commands now and
+the editor later, goes through one shared check; none checks for itself.
+
 **Unwritten changes block a reload, and that needs an escape hatch.** When a write has failed,
 the changes stay in memory flagged unwritten, and reloading would discard them — so reload
 refuses. If the underlying fault is permanent (disk full, permissions, a stray file where the
@@ -873,6 +893,14 @@ It **notifies only**. The plugin never downloads, installs, or replaces anything
 A bound item opens its menu on **either left- or right-click**, matching 1.x, from the
 **main hand only**. Paper fires the interaction event once per hand; the off-hand event is
 ignored. The event is cancelled so the item's normal behaviour does not also fire.
+
+The decision and the cancel happen inside the event; **the menu opens on the next tick**, which
+is at most 50 ms and lets other plugins finish reacting to the click. At most one open is pending
+per player: one click can fire more than one interaction event, every one of them is cancelled,
+and the first decides the menu. On that tick the menu opens only if the player is still online,
+the menu still exists, and no other screen is open (another plugin or a container answered the
+same click); otherwise nothing happens and nothing is said. The player's own inventory counts as
+no screen.
 
 ---
 

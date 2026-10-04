@@ -106,6 +106,12 @@ import java.util.UUID;
  * {@link SessionManager#view} keeps a session valid for the tick in which its menu was opened even if
  * something else has already replaced it.
  *
+ * <p>{@code BACK} with nothing to return to follows the same rule, through the same method:
+ * {@link SessionManager#back} only reports that it found nothing, and the list then makes
+ * {@code CLOSE}'s decision. So {@code BACK} on the first menu of a session still closes that menu, and
+ * it never closes a screen {@code CLOSE} would have left open, such as another plugin's screen opened
+ * by the list's own {@code PLAYER} action in the tick its {@code MENU} opened a new session.
+ *
  * <h2>The elevation window is the synchronous dispatch and nothing more</h2>
  *
  * {@code PLAYER_ELEVATED} adds a {@link PermissionAttachment}, dispatches, and removes it in
@@ -225,11 +231,7 @@ public final class ActionExecutor implements Listener {
             case Action.ElevatedCommand command -> elevated(player, command);
             case Action.Message message -> player.sendMessage(text.message(message.text(), player));
             case Action.OpenMenu menu -> open(sequence, menu.menuName());
-            case Action.Back ignored -> {
-                if (sessions.back(player) == SessionManager.OpenResult.OPENED) {
-                    sequence.followOpenMenu();
-                }
-            }
+            case Action.Back ignored -> back(sequence);
             case Action.Close ignored -> close(sequence);
             case Action.Delay ignored -> throw new IllegalStateException("delays are handled by Sequence.run()");
         }
@@ -272,6 +274,16 @@ public final class ActionExecutor implements Listener {
             }
             case CANCELLED, NO_HISTORY -> {
                 // Another plugin refused the open; navigate never reports NO_HISTORY.
+            }
+        }
+    }
+
+    private void back(Sequence sequence) {
+        switch (sessions.back(sequence.player)) {
+            case OPENED -> sequence.followOpenMenu();
+            case NO_HISTORY -> close(sequence);
+            case NO_SUCH_MENU, CANCELLED -> {
+                // back skips deleted menus, so only CANCELLED arrives here: another plugin refused the open.
             }
         }
     }

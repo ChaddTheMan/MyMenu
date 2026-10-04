@@ -1294,6 +1294,82 @@ carry slots it has no business having. New top-level cases of `MutationResult` w
 subcommands' exhaustive switches. A sealed `Reason` puts the detail exactly on the reasons that have
 it.
 
+### 99. A bound item's menu opens on the next tick, through one opener that lets the first request win
+**Old:** Up to stage 7.4, `PlayerInteractListener` opened the menu inside `PlayerInteractEvent`. It
+was the one handler that ARCHITECTURE §9 recorded as an exception to rule 9.
+**New:** The listener's decision is unchanged and stays in the event: the same early returns (off
+hand, an explicit `DENY` on item use, `PHYSICAL`, an empty hand), the same match, and
+`setCancelled(true)` on every matching event. It then calls `BoundItemOpener.request(player, menu)`.
+The opener is not a listener. It keeps a set of the UUIDs of players with an open pending. A request
+for a player already in the set returns at once. Otherwise the open is scheduled with `runTask` and
+the UUID is added. The task removes the UUID as its first step and looks the player up by UUID. It
+stops if the player is offline or has any screen open other than their own inventory. Otherwise it
+calls `SessionManager.open(player, menu, VIEW)` and ignores the result. No skip sends a message or
+writes a log line. Stage 7.5's entity events will call the same `request`.
+**Why:** The ruling (scope settled 2026-10-02): decide and cancel inside the event, open on the next
+tick (rule 9). The wait is at most 50 ms, inside normal network delay, and it lets every plugin finish
+reacting to the click before MyMenu acts.
+- *The decision stays in the event* because cancelling is the event's outcome. A cancel made later
+  would come after the item's own use (placing, eating, shearing) had already happened.
+- *The guard.* One physical click can fire more than one main-hand interact event. The Paper 26.2
+  server code shows three ways (STAGE7.45-REPORT §5, Q2):
+  - The arm swing that follows a right-click the client treats as a success is read as
+    `LEFT_CLICK_AIR` when the server's ray trace hits nothing.
+  - In adventure mode, that same swing is read as `LEFT_CLICK_BLOCK` when the ray trace hits a block.
+  - A right-click on a block is followed by the client's item use. When the server's own ray trace
+    misses that block, that item use fires a second event.
+
+  The guard decides only whether a new open is scheduled; every matching event is still cancelled, or
+  the item's use would happen on the second event. The first request wins because the extra events
+  are by-products of one click with one held item, so the first already names the menu. A later
+  request replacing it would make the result depend on packet order. The user chose to keep this.
+- *The screen check, and why it says nothing.* A screen open by the tick means something else
+  answered the same click: another plugin's screen for the clicked block, a vanilla container, or a
+  MyMenu screen opened by another path in that tick. Opening over it would replace what the player is
+  looking at. Nothing went wrong from the player's side, so nothing is said.
+- *Own inventory = no screen.* Paper 26.2 server code, read with `javap`:
+  - With nothing open, `getOpenInventory()` returns the player's own inventory view.
+  - Its top inventory reports `CRAFTING` in every game mode; the view itself reports `CREATIVE` in
+    creative.
+  - A crafting table reports `WORKBENCH`, and a crafter reports `CRAFTER`.
+  - `CRAFTING` cannot be passed to `createInventory`, so no plugin screen can report it.
+
+  The test is therefore the top inventory's type (`BoundItemOpener.hasScreenOpen`).
+- *The UUID lookup.* A held `Player` can report itself online after a rejoin (ARCHITECTURE §6).
+- *Cleared by the task, not by a tick comparison* (#77). An entry lives exactly as long as its task
+  waits, so no quit handler is needed.
+
+**Cost:** the menu appears one tick after the click. Screens that are not inventory views (a book
+opened with `openBook`, a sign editor, a dialog) are invisible to the check, so they do not stop the
+open.
+
+### 100. `BACK` with nothing to return to closes only under `CLOSE`'s conditions
+**Old:** SPEC rev 2 §9.3: "`BACK` pops one entry. With an empty stack it closes the menu and ends the
+session." From stage 6 to 7.4, `SessionManager.back` called `player.closeInventory()` whenever it
+found nothing to return to, whatever screen was open.
+**New:** `SessionManager.back` never closes anything. When it finds no menu to return to, including
+when every entry was skipped because its menu was deleted, it returns `NO_HISTORY`. `ActionExecutor`
+answers `NO_HISTORY` by calling the same `close(sequence)` method as `CLOSE`. The screen closes only
+when a MyMenu menu in view mode is open and `SessionManager.view` returns the session the list
+remembers (#95, including the adopted session after `MENU` or `BACK`). Otherwise nothing happens: no
+message, no log line, and the rest of the list runs. A `BACK` that finds a menu is unchanged.
+**Why:** The ruling (settled 2026-10-02): `BACK` with no history closes only under `CLOSE`'s
+conditions (#95). The bug was found by reading the code at the stage 7.4 review, not observed. Take
+`[DELAY 60, MENU b, PLAYER warps, BACK]` after the player closed the menu during the delay:
+1. `MENU b` starts a new session with no history.
+2. The warps screen opens over it.
+3. The swap marker (#77) keeps the new session valid for that tick.
+4. The old `back` therefore closed the warps screen.
+
+It is audit F3's bug class, on the one path #95 did not cover. The decision moved out of
+`SessionManager` because only the list knows which session it was acting on. Both actions use one
+method, so the condition exists once and cannot drift. SPEC §9.3's reasons for closing still hold for
+the ordinary case, which is unchanged: `BACK` on the first menu of a session closes that menu, and the
+close ends the session as any close does.
+**Cost:** a `BACK` with nothing to return to, run after the player opened a menu themselves during a
+delay, now leaves that menu open instead of closing it. That matches #95: a menu the player opened
+themselves is never closed by a list.
+
 ---
 
 ## Template for new entries

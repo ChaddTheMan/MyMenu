@@ -219,12 +219,13 @@ the user can do; flag it when stage 10 is reached.
 
 ## Build order
 
-Stages 1 to 7 are built and committed. The rest of the plan:
+Stages 1 to 7, 7.25 and 7.4 are built and committed. The rest of the plan:
 
 | Stage | What |
 |---|---|
 | 7.25 | Code audit (done: `STAGE7.25-REPORT.md`) |
-| 7.4 | Fixes from the audit |
+| 7.4 | Fixes from the audit (done) |
+| 7.45 | What 7.4 left out: the bound item's menu opens on the next tick; `BACK` with no history |
 | 7.5 | Bound items and join behaviour |
 | 7.75 | Settings schema and `/mymenu config` commands |
 | 7.9 | Per-menu storage: one file per menu, drafts, typed backups |

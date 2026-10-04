@@ -39,6 +39,7 @@ import me.chaddtheman.mymenu.command.SetCommand;
 import me.chaddtheman.mymenu.command.UnsetCommand;
 import me.chaddtheman.mymenu.command.UpdateCommand;
 import me.chaddtheman.mymenu.config.PluginConfig;
+import me.chaddtheman.mymenu.listener.BoundItemOpener;
 import me.chaddtheman.mymenu.listener.InventoryClickListener;
 import me.chaddtheman.mymenu.listener.InventoryCloseListener;
 import me.chaddtheman.mymenu.listener.InventoryDragListener;
@@ -134,8 +135,8 @@ public final class MyMenu extends JavaPlugin {
         Consumer<PluginConfig> applyConfig =
                 loaded -> applyConfig(loaded, storage, writer, actions, menuService, executor);
 
-        PlayerInteractListener interact =
-                new PlayerInteractListener(this, menuService.registry(), sessions, items, logger);
+        PlayerInteractListener interact = new PlayerInteractListener(this, menuService.registry(),
+                new BoundItemOpener(this, sessions), items, logger);
         PluginManager plugins = getServer().getPluginManager();
         plugins.registerEvents(executor, this);
         plugins.registerEvents(new InventoryClickListener(this, menuService.registry(), sessions,
